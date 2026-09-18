@@ -311,10 +311,10 @@ export function createCompletionFlexMessage(quest: Quest, player: Player): LineF
 
 // Generate dramatic Rank-Up announcement Flex Message.
 // The previous rank is derived from the rank ladder because the function receives the new rank.
-export function createRankUpFlexMessage(newRank: string, player: Player): LineFlexMessage {
+export function createRankUpFlexMessage(newRank: string, player: Player, oldRankOverride?: string): LineFlexMessage {
   const rankOrder = ['E', 'D', 'C', 'B', 'A', 'S'];
   const newIndex = Math.max(0, rankOrder.indexOf(newRank));
-  const oldRank = rankOrder[Math.max(0, newIndex - 1)] || newRank;
+  const oldRank = oldRankOverride || rankOrder[Math.max(0, newIndex - 1)] || newRank;
 
   return {
     type: 'flex',
@@ -498,6 +498,109 @@ export function createWeeklyBossClearedFlexMessage(quest: Quest, player: Player)
       }
     }
   };
+}
+
+// Compact System Window used by LINE as the player's primary dashboard.
+export function createSystemStatusFlexMessage(player: Player, appUrl: string, options?: {
+  dailyQuest?: Quest | null;
+  emergencyQuest?: Quest | null;
+  weeklyBossQuest?: Quest | null;
+}): LineFlexMessage {
+  const xpPercent = player.currentLevelMaxXp > 0
+    ? Math.min(100, Math.round((player.xp / player.currentLevelMaxXp) * 100))
+    : 0;
+  const status = player.activeDebuff ? 'DEBUFF ACTIVE' : 'NORMAL';
+  const statusColor = player.activeDebuff ? '#ef4444' : '#34d399';
+  const bar = (percent: number, width = 10) => {
+    const filled = Math.round((Math.max(0, Math.min(100, percent)) / 100) * width);
+    return '█'.repeat(filled) + '░'.repeat(width - filled);
+  };
+  const daily = options?.dailyQuest;
+  const emergency = options?.emergencyQuest;
+  const boss = options?.weeklyBossQuest;
+
+  const questRows: any[] = [];
+  if (daily) questRows.push({ type: 'text', text: `DAILY  ${daily.title}`, color: '#e2e8f0', size: 'xs', wrap: true });
+  if (emergency) questRows.push({ type: 'text', text: `EMERGENCY  ${emergency.title}`, color: '#fca5a5', size: 'xs', wrap: true, margin: 'xs' });
+  if (boss) questRows.push({ type: 'text', text: `BOSS  ${boss.title}`, color: '#f8d27a', size: 'xs', wrap: true, margin: 'xs' });
+  if (!questRows.length) questRows.push({ type: 'text', text: 'NO ACTIVE QUEST', color: '#64748b', size: 'xs' });
+
+  return {
+    type: 'flex',
+    altText: `[SYSTEM] LV.${player.level} RANK ${player.rank} | ${status}`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box', layout: 'vertical', backgroundColor: '#05070a', paddingAll: '20px',
+        contents: [
+          { type: 'text', text: '[ SYSTEM WINDOW ]', color: '#38bdf8', size: 'xs', weight: 'bold', align: 'center' },
+          { type: 'text', text: 'PLAYER STATUS', color: '#ffffff', size: 'xl', weight: 'bold', align: 'center', margin: 'sm' },
+          { type: 'text', text: player.displayName, color: '#94a3b8', size: 'xxs', align: 'center', margin: 'xs' }
+        ]
+      },
+      body: {
+        type: 'box', layout: 'vertical', backgroundColor: '#0a0f1d', paddingAll: '20px', spacing: 'md',
+        contents: [
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: `LV. ${String(player.level).padStart(2, '0')}`, color: '#ffffff', size: 'lg', weight: 'bold', flex: 1 },
+            { type: 'text', text: `RANK ${player.rank}`, color: '#f8d27a', size: 'lg', weight: 'bold', align: 'end', flex: 1 }
+          ]},
+          { type: 'text', text: `EXP  ${bar(xpPercent)}  ${xpPercent}%`, color: '#38bdf8', size: 'xs', weight: 'bold' },
+          { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+            { type: 'text', text: `HP ${player.hp}/${player.maxHp}`, color: '#cbd5e1', size: 'xxs', flex: 1 },
+            { type: 'text', text: `STA ${player.stamina}/${player.maxStamina}`, color: '#cbd5e1', size: 'xxs', flex: 1, align: 'end' }
+          ]},
+          { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+            { type: 'text', text: `STR ${player.stats.STR}`, color: '#e2e8f0', size: 'xxs', flex: 1 },
+            { type: 'text', text: `AGI ${player.stats.AGI}`, color: '#e2e8f0', size: 'xxs', flex: 1 },
+            { type: 'text', text: `VIT ${player.stats.VIT}`, color: '#e2e8f0', size: 'xxs', flex: 1 },
+            { type: 'text', text: `INT ${player.stats.INT}`, color: '#e2e8f0', size: 'xxs', flex: 1 }
+          ]},
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: `STREAK  ${player.streak} DAYS`, color: '#fbbf24', size: 'xs', weight: 'bold', flex: 1 },
+            { type: 'text', text: status, color: statusColor, size: 'xs', weight: 'bold', align: 'end', flex: 1 }
+          ]},
+          { type: 'separator', margin: 'sm' },
+          { type: 'text', text: 'ACTIVE SYSTEM EVENTS', color: '#64748b', size: 'xxs', weight: 'bold' },
+          ...questRows
+        ]
+      },
+      footer: {
+        type: 'box', layout: 'horizontal', spacing: 'sm', backgroundColor: '#05070a', paddingAll: '12px',
+        contents: [
+          { type: 'button', style: 'primary', color: '#0ea5e9', action: { type: 'uri', label: 'QUEST', uri: `${appUrl}/?tab=quest` } },
+          { type: 'button', style: 'secondary', action: { type: 'uri', label: 'STATUS', uri: `${appUrl}/?tab=status` } }
+        ]
+      }
+    }
+  };
+}
+
+export function createEmergencyQuestFlexMessage(quest: Quest, appUrl: string): LineFlexMessage {
+  const base = createQuestFlexMessage(quest, appUrl);
+  const contents: any = base.contents;
+  if (contents.header?.contents?.[0]) contents.header.contents[0].text = '[ SYSTEM ALERT ]';
+  if (contents.header?.contents?.[0]) contents.header.contents[0].color = '#ef4444';
+  if (contents.body?.contents) {
+    contents.body.contents.unshift({ type: 'text', text: 'EMERGENCY PROTOCOL', color: '#fca5a5', size: 'xs', weight: 'bold' });
+  }
+  base.altText = `[SYSTEM ALERT] EMERGENCY QUEST — ${quest.title}`;
+  return base;
+}
+
+export function createWeeklyBossQuestFlexMessage(quest: Quest, appUrl: string): LineFlexMessage {
+  const base = createQuestFlexMessage(quest, appUrl);
+  const contents: any = base.contents;
+  if (contents.header?.contents?.[0]) {
+    contents.header.contents[0].text = '[ SYSTEM SPECIAL MISSION ]';
+    contents.header.contents[0].color = '#f8d27a';
+  }
+  if (contents.body?.contents) {
+    contents.body.contents.unshift({ type: 'text', text: 'WEEKLY BOSS • ELITE', color: '#f8d27a', size: 'xs', weight: 'bold' });
+  }
+  base.altText = `[SYSTEM] WEEKLY BOSS — ${quest.title}`;
+  return base;
 }
 
 // Generate LINE Status Flex Message
