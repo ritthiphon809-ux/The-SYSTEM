@@ -619,4 +619,55 @@ Return STRICT JSON ONLY:
   }
 }
 
+export interface ExcuseAnalysis {
+  validExcuse: boolean;
+  systemResponse: string;
+}
+
+export async function analyzeExcuseWithAI(reason: string): Promise<ExcuseAnalysis> {
+  const client = getAIClient();
+
+  const fallback = (): ExcuseAnalysis => {
+    const normalized = reason.toLowerCase();
+    const valid = /เจ็บ|บาดเจ็บ|ป่วย|ไข้|ไม่สบาย|เวียนหัว|อุบัติเหตุ|ฉุกเฉิน|เข้าโรงพยาบาล|hospital|injur|sick|ill|dizz|emergency|accident|medical/.test(normalized);
+    return {
+      validExcuse: valid,
+      systemResponse: valid
+        ? '[SYSTEM] เหตุผลได้รับการยอมรับในฐานะเหตุสุดวิสัยทางกายภาพ บทลงโทษจะไม่ถูกนำมาใช้ในรอบนี้ โปรดพักและฟื้นฟูร่างกายก่อนกลับเข้าสู่ระบบ'
+        : '[SYSTEM] เหตุผลไม่เข้าข่ายเหตุสุดวิสัย ระบบจะดำเนินบทลงโทษตามกฎเดิม'
+    };
+  };
+
+  if (!client) return fallback();
+
+  try {
+    const prompt = `
+วิเคราะห์เหตุผลที่ผู้เล่นพลาด Daily Quest deadline ของ THE SYSTEM
+เหตุผลจากผู้เล่น: "${reason}"
+
+เกณฑ์ตัดสินอย่างเคร่งครัด:
+- validExcuse = true เฉพาะกรณีเจ็บป่วย, บาดเจ็บ, อาการผิดปกติทางกายที่ควรหยุดฝึก, หรือเหตุสุดวิสัยร้ายแรงที่อยู่นอกการควบคุมจริง
+- validExcuse = false สำหรับขี้เกียจ, ลืม, ไม่มีเวลา, งานทั่วไป, ติดธุระทั่วไป, ไม่อยากทำ หรือเหตุผลที่ยังสามารถจัดเวลา/ปรับเควสได้
+- ห้ามแต่งข้อเท็จจริงเพิ่มจากเหตุผลที่ผู้ใช้ให้
+- systemResponse ต้องเป็นภาษาไทย สั้น กระชับ โทน THE SYSTEM และอธิบายผลการตัดสิน
+
+Return STRICT JSON ONLY:
+{
+  "validExcuse": boolean,
+  "systemResponse": string
+}`;
+
+    const text = await generateWithModelFallback(client, prompt, SYSTEM_PERSONA_PROMPT);
+    const parsed = JSON.parse(text || '{}');
+    return {
+      validExcuse: Boolean(parsed.validExcuse),
+      systemResponse: typeof parsed.systemResponse === 'string' && parsed.systemResponse.trim()
+        ? parsed.systemResponse.trim()
+        : fallback().systemResponse
+    };
+  } catch (error: any) {
+    console.warn('[SYSTEM] Excuse analysis fallback:', error?.message || error);
+    return fallback();
+  }
+}
 
