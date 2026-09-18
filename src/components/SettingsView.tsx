@@ -88,13 +88,18 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
     setTimeout(() => setCopiedWebhook(false), 2000);
   };
 
-  const handlePushRealLine = async (type: 'quest' | 'reminder') => {
+  const handlePushRealLine = async (type: 'quest' | 'reminder' | 'briefing') => {
     playUiClick();
     setIsPushing(true);
     setPushStatusMessage(null);
 
     try {
-      const endpoint = type === 'quest' ? '/api/line/push-quest' : '/api/line/push-reminder';
+      const endpoint =
+        type === 'quest'
+          ? '/api/line/push-quest'
+          : type === 'reminder'
+          ? '/api/line/push-reminder'
+          : '/api/line/push-briefing';
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -301,6 +306,15 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
 
           <div className="flex flex-wrap gap-2">
             <button
+              onClick={() => handlePushRealLine('briefing')}
+              disabled={isPushing}
+              className="px-3 py-2 rounded bg-sky-950/80 hover:bg-sky-900 border border-sky-500/50 text-sky-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              <Activity className="w-3.5 h-3.5 text-sky-400" />
+              <span>TEST PUSH 08:00 BRIEFING</span>
+            </button>
+
+            <button
               onClick={() => handlePushRealLine('quest')}
               disabled={isPushing}
               className="px-3 py-2 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
@@ -391,6 +405,15 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
 
         {/* Quick Simulated Triggers */}
         <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            onClick={() => triggerLineSimAction('GET_BRIEFING_FLEX')}
+            disabled={isSimulating}
+            className="px-3 py-1.5 rounded bg-slate-900 border border-sky-950 hover:border-sky-500 text-sky-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Activity className="w-3.5 h-3.5 text-sky-400" />
+            <span>08:00 HEALTH BRIEFING</span>
+          </button>
+
           <button
             onClick={() => triggerLineSimAction('GET_QUEST_FLEX')}
             disabled={isSimulating}

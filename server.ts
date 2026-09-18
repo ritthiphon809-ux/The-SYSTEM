@@ -17,7 +17,8 @@ import {
 } from './src/modules/game-engine.ts';
 import {
   generateDailyQuestWithAI,
-  processNaturalLanguageWithAI
+  processNaturalLanguageWithAI,
+  generateDailyHealthBriefing
 } from './server/gemini-service.ts';
 import {
   verifyLineSignature,
@@ -25,6 +26,7 @@ import {
   createCompletionFlexMessage,
   createStatusFlexMessage,
   createReminderFlexMessage,
+  createBriefingFlexMessage,
   replyLineMessage,
   sendLinePushMessage
 } from './server/line-service.ts';
@@ -35,6 +37,7 @@ dotenv.config();
 const connectedLineUserIds = new Set<string>();
 let lastPushDateQuest = '';
 let lastPushDateReminder = '';
+let lastPushDateBriefing = '';
 let currentPlayer: Player = { ...DEMO_PLAYER_STATE };
 let currentQuest: Quest = {
   id: 'quest-today-1',
@@ -660,6 +663,72 @@ async function startServer() {
     });
   });
 
+  // 13b. Get AI Morning Health Briefing
+  app.get('/api/health-briefing', async (_req, res) => {
+    try {
+      const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+      res.json({
+        success: true,
+        briefing,
+        player: currentPlayer,
+        quest: currentQuest
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Briefing error' });
+    }
+  });
+
+  // 13c. Push Morning Health Briefing via LINE
+  app.post('/api/line/push-briefing', async (req, res) => {
+    const appUrl = process.env.APP_URL || 'http://localhost:3000';
+    const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+    const flexMsg = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
+    const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: 'LINE_CHANNEL_ACCESS_TOKEN is not configured. Add it in AI Studio Secrets or environment.',
+        briefing,
+        flexMessage: flexMsg
+      });
+    }
+
+    const { targetUserId } = req.body;
+    const targets = targetUserId ? [targetUserId] : Array.from(connectedLineUserIds);
+
+    if (targets.length === 0) {
+      return res.json({
+        success: false,
+        message: 'No connected LINE users registered yet. Add the LINE bot as friend or send a message to it first!',
+        connectedUsersCount: 0,
+        briefing,
+        flexMessage: flexMsg
+      });
+    }
+
+    const results = [];
+    for (const uid of targets) {
+      const ok = await sendLinePushMessage(uid, [flexMsg]);
+      results.push({ userId: uid, success: ok });
+    }
+
+    eventLogs.unshift({
+      id: `evt-briefing-${Date.now()}`,
+      type: 'STATUS_SYNC',
+      title: 'Morning Health Briefing Dispatched',
+      description: `Readiness Score ${briefing.readinessScore}% sent to ${results.filter((r) => r.success).length} hunters.`,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: results.some((r) => r.success),
+      results,
+      briefing,
+      connectedUsersCount: connectedLineUserIds.size
+    });
+  });
+
   // 14. LINE Webhook Endpoint (Official LINE Messaging API Spec)
   app.post('/api/line/webhook', async (req: any, res) => {
     const signature = req.headers['x-line-signature'] as string;
@@ -736,7 +805,22 @@ async function startServer() {
             await replyLineMessage(replyToken, [statusFlex]);
           }
         }
-        // 3. Check for Quick Completion
+        // 3. Check for Morning Health Briefing Command
+        else if (
+          lower === 'briefing' ||
+          lower.includes('รายงาน') ||
+          lower.includes('สภาพร่างกาย') ||
+          lower.includes('สุขภาพ') ||
+          lower.includes('ตอนเช้า') ||
+          lower === 'morning'
+        ) {
+          const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+          const briefingFlex = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
+          if (replyToken) {
+            await replyLineMessage(replyToken, [briefingFlex]);
+          }
+        }
+        // 4. Check for Quick Completion
         else if (
           lower === 'complete' ||
           lower === 'done' ||
@@ -857,6 +941,17 @@ async function startServer() {
       });
     }
 
+    if (action === 'GET_BRIEFING_FLEX') {
+      const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+      const flexMsg = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
+      return res.json({
+        type: 'flex',
+        flexMessage: flexMsg,
+        briefing,
+        systemText: `[SYSTEM MORNING DIRECTIVE]\nReadiness: ${briefing.readinessScore}%\n${briefing.greeting}\n${briefing.conditionAssessment}`
+      });
+    }
+
     if (action === 'GET_REMINDER') {
       return res.json({
         type: 'text',
@@ -912,6 +1007,17 @@ async function startServer() {
         const flex = createQuestFlexMessage(currentQuest, appUrl);
         for (const uid of connectedLineUserIds) {
           await sendLinePushMessage(uid, [flex]);
+        }
+      }
+
+      // 08:00 Morning Health & Readiness Briefing Dispatch
+      if (hours === 8 && minutes === 0 && lastPushDateBriefing !== todayStr) {
+        lastPushDateBriefing = todayStr;
+        console.log(`[THE SYSTEM] 08:00 Auto-Pushing Morning Health Briefing to ${connectedLineUserIds.size} LINE hunters...`);
+        const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+        const briefingFlex = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
+        for (const uid of connectedLineUserIds) {
+          await sendLinePushMessage(uid, [briefingFlex]);
         }
       }
 

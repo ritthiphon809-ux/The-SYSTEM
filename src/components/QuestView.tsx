@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Quest, QuestDifficulty } from '../types.ts';
-import { Play, CheckCircle2, Sparkles, RotateCcw, CheckSquare, Square, ListChecks, Dumbbell } from 'lucide-react';
+import { Quest, QuestDifficulty, QuestStep } from '../types.ts';
+import { Play, CheckCircle2, Sparkles, RotateCcw, CheckSquare, Square, ListChecks, Dumbbell, Timer } from 'lucide-react';
 import { playUiClick, playWarningSound, triggerHaptic } from '../utils/audio.ts';
+import { ActiveWorkoutModal } from './ActiveWorkoutModal.tsx';
 
 interface QuestViewProps {
   quest: Quest;
@@ -23,6 +24,7 @@ export function QuestView({
   onToggleStep
 }: QuestViewProps) {
   const [selectedDifficulty, setSelectedDifficulty] = useState<QuestDifficulty>(quest.difficulty);
+  const [activeTimerStep, setActiveTimerStep] = useState<QuestStep | null>(null);
 
   const handleDifficultyRegen = (diff: QuestDifficulty) => {
     setSelectedDifficulty(diff);
@@ -166,7 +168,22 @@ export function QuestView({
                       </div>
                     </div>
 
-                    <div className="flex-shrink-0 font-mono-system text-[11px]">
+                    <div className="flex items-center gap-2 flex-shrink-0 font-mono-system text-[11px]">
+                      {!isDone && (
+                        <button
+                          onClick={() => {
+                            playUiClick();
+                            triggerHaptic('light');
+                            setActiveTimerStep(step);
+                          }}
+                          className="px-2.5 py-1 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/60 text-cyan-300 font-bold flex items-center gap-1 transition-all active:scale-95 shadow-[0_0_10px_rgba(56,189,248,0.2)]"
+                          title="เปิดโหมดจับเวลาออกกำลังกาย & จับเวลาพักระหว่างเซ็ต"
+                        >
+                          <Timer className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>START TIMER</span>
+                        </button>
+                      )}
+
                       {isDone ? (
                         <span className="px-2 py-1 rounded bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold">
                           [DONE]
@@ -321,6 +338,21 @@ export function QuestView({
           </button>
         </div>
       </section>
+
+      {/* Interactive Workout & Rest Timer Modal */}
+      {activeTimerStep && (
+        <ActiveWorkoutModal
+          step={activeTimerStep}
+          isOpen={Boolean(activeTimerStep)}
+          onClose={() => setActiveTimerStep(null)}
+          onCompleteStep={(stepId) => {
+            if (onToggleStep) {
+              onToggleStep(stepId);
+            }
+            setActiveTimerStep(null);
+          }}
+        />
+      )}
     </div>
   );
 }

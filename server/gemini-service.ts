@@ -379,3 +379,68 @@ Return STRICT JSON ONLY:
   }
 }
 
+export interface HealthBriefingPayload {
+  greeting: string;
+  conditionAssessment: string;
+  readinessScore: number;
+  recommendation: string;
+  focusArea: 'STRENGTH' | 'AGILITY' | 'VITALITY' | 'RECOVERY';
+}
+
+export async function generateDailyHealthBriefing(
+  player: Player,
+  quest: Quest
+): Promise<HealthBriefingPayload> {
+  const fallback: HealthBriefingPayload = {
+    greeting: `อรุณสวัสดิ์ ฮันเตอร์ ${player.name} (RANK ${player.rank})`,
+    conditionAssessment: `อัตราชีพจรเสถียร พลังชีวิต ${player.hp}/${player.maxHp} HP สเตมินา ${player.stamina}/${player.maxStamina} MP ร่างกายพร้อมรับแรงต้านประจำวัน`,
+    readinessScore: Math.min(98, Math.max(65, Math.round((player.hp / player.maxHp) * 50 + (player.stamina / player.maxStamina) * 50))),
+    recommendation: `ระบบได้เตรียมโพรโทคอล "${quest.title}" ไว้แล้ว กำหนดเส้นตาย ${quest.deadline || '21:00'} น. จงเริ่มต้นเมื่อพร้อม`,
+    focusArea: player.hp < 40 ? 'RECOVERY' : (quest.type as any) || 'STRENGTH'
+  };
+
+  const client = getGeminiClient();
+  if (!client) return fallback;
+
+  try {
+    const prompt = `
+Generate a Morning Health & Readiness Briefing for Hunter:
+- Name: ${player.name}
+- Level: Lv. ${player.level} (Rank ${player.rank})
+- HP: ${player.hp} / ${player.maxHp}
+- Stamina: ${player.stamina} / ${player.maxStamina}
+- Current Streak: ${player.streak} days
+- Stats: STR: ${player.stats.STR}, AGI: ${player.stats.AGI}, VIT: ${player.stats.VIT}, INT: ${player.stats.INT}
+- Today's Quest: ${quest.title} (Difficulty: ${quest.difficulty}, Target: ${quest.target} ${quest.unit})
+
+Language: Thai language exclusively.
+Tone: Cold, disciplined, authoritative, precise system intelligence.
+Calculate readinessScore (0-100) based on HP, Stamina, and streak.
+
+Return STRICT JSON ONLY:
+{
+  "greeting": string (คำทักทายสั้นภาษาไทย เช่น "อรุณสวัสดิ์ ฮันเตอร์..."),
+  "conditionAssessment": string (การประเมินสภาพร่างกาย 1-2 ประโยค เช่น "ค่าชีพจรและสเตมินา 100/100 MP อยู่ในเกณฑ์เหมาะสม..."),
+  "readinessScore": number (60-100),
+  "recommendation": string (คำสั่งหรือคำแนะนำประจำวัน 1 ประโยค เช่น "โพรโทคอลประจำวันพร้อมแล้ว จงเริ่มการฝึก..."),
+  "focusArea": "STRENGTH" | "AGILITY" | "VITALITY" | "RECOVERY"
+}
+`;
+
+    const text = await generateWithModelFallback(client, prompt, SYSTEM_PERSONA_PROMPT);
+    const parsed = JSON.parse(text || '{}');
+
+    return {
+      greeting: parsed.greeting || fallback.greeting,
+      conditionAssessment: parsed.conditionAssessment || fallback.conditionAssessment,
+      readinessScore: typeof parsed.readinessScore === 'number' ? parsed.readinessScore : fallback.readinessScore,
+      recommendation: parsed.recommendation || fallback.recommendation,
+      focusArea: parsed.focusArea || fallback.focusArea
+    };
+  } catch (err: any) {
+    console.warn('[SYSTEM] Failed to generate AI Health Briefing, using fallback:', err?.message || err);
+    return fallback;
+  }
+}
+
+

@@ -547,6 +547,214 @@ export function createReminderFlexMessage(quest: Quest, appUrl: string): LineFle
   };
 }
 
+// Generate LINE Morning Health & Readiness Briefing Flex Message
+export function createBriefingFlexMessage(
+  briefing: {
+    greeting: string;
+    conditionAssessment: string;
+    readinessScore: number;
+    recommendation: string;
+    focusArea: string;
+  },
+  player: Player,
+  quest: Quest,
+  appUrl: string
+): LineFlexMessage {
+  const scoreColor =
+    briefing.readinessScore >= 80 ? '#38bdf8' : briefing.readinessScore >= 60 ? '#fbbf24' : '#f43f5e';
+
+  return {
+    type: 'flex',
+    altText: `[SYSTEM] DAILY HEALTH BRIEFING: READINESS ${briefing.readinessScore}%`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#05070a',
+        paddingAll: '20px',
+        contents: [
+          {
+            type: 'text',
+            text: '[SYSTEM MORNING DIRECTIVE]',
+            color: '#38bdf8',
+            size: 'xs',
+            weight: 'bold'
+          },
+          {
+            type: 'text',
+            text: 'DAILY HEALTH BRIEFING',
+            color: '#ffffff',
+            size: 'lg',
+            weight: 'bold',
+            margin: 'xs'
+          },
+          {
+            type: 'text',
+            text: briefing.greeting,
+            color: '#94a3b8',
+            size: 'xs',
+            margin: 'sm'
+          }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#0a0f1d',
+        paddingAll: '20px',
+        spacing: 'md',
+        contents: [
+          // Readiness Gauge Row
+          {
+            type: 'box',
+            layout: 'horizontal',
+            alignItems: 'center',
+            contents: [
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 3,
+                contents: [
+                  {
+                    type: 'text',
+                    text: 'PHYSICAL READINESS',
+                    color: '#64748b',
+                    size: 'xxs',
+                    weight: 'bold'
+                  },
+                  {
+                    type: 'text',
+                    text: `${briefing.readinessScore}%`,
+                    color: scoreColor,
+                    size: 'xxl',
+                    weight: 'bold'
+                  }
+                ]
+              },
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 4,
+                contents: [
+                  {
+                    type: 'text',
+                    text: `HP: ${player.hp}/${player.maxHp}`,
+                    color: '#f43f5e',
+                    size: 'xs',
+                    weight: 'bold'
+                  },
+                  {
+                    type: 'text',
+                    text: `MP: ${player.stamina}/${player.maxStamina}`,
+                    color: '#38bdf8',
+                    size: 'xs',
+                    weight: 'bold',
+                    margin: 'xs'
+                  },
+                  {
+                    type: 'text',
+                    text: `STREAK: ${player.streak} DAYS`,
+                    color: '#fbbf24',
+                    size: 'xs',
+                    margin: 'xs'
+                  }
+                ]
+              }
+            ]
+          },
+          // Assessment
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#05070a',
+            cornerRadius: '4px',
+            paddingAll: '12px',
+            contents: [
+              {
+                type: 'text',
+                text: 'SYSTEM ASSESSMENT:',
+                color: '#38bdf8',
+                size: 'xxs',
+                weight: 'bold'
+              },
+              {
+                type: 'text',
+                text: briefing.conditionAssessment,
+                color: '#cbd5e1',
+                size: 'xs',
+                wrap: true,
+                margin: 'xs'
+              }
+            ]
+          },
+          // Today's Quest Snippet
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#05070a',
+            cornerRadius: '4px',
+            paddingAll: '12px',
+            contents: [
+              {
+                type: 'text',
+                text: 'ACTIVE PROTOCOL:',
+                color: '#10b981',
+                size: 'xxs',
+                weight: 'bold'
+              },
+              {
+                type: 'text',
+                text: quest.title,
+                color: '#ffffff',
+                size: 'xs',
+                weight: 'bold',
+                margin: 'xs'
+              },
+              {
+                type: 'text',
+                text: `เป้าหมาย: ${quest.target} ${quest.unit} (กำหนดส่ง: ${quest.deadline || '21:00'} น.)`,
+                color: '#94a3b8',
+                size: 'xxs',
+                margin: 'xs'
+              }
+            ]
+          },
+          // Recommendation
+          {
+            type: 'text',
+            text: briefing.recommendation,
+            color: '#38bdf8',
+            size: 'xs',
+            wrap: true
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#05070a',
+        paddingAll: '15px',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#0284c7',
+            height: 'sm',
+            action: {
+              type: 'uri',
+              label: 'INITIATE QUEST PROTOCOL',
+              uri: `${appUrl}/quest`
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
 // Reply message to LINE user via replyToken
 export async function replyLineMessage(replyToken: string, messages: any[]): Promise<boolean> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;

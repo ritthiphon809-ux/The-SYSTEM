@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Player, Quest } from '../types.ts';
-import { Flame, Play, CheckCircle2, Send, Sparkles, AlertCircle, ArrowRight, Shield, Heart, BatteryCharging, Footprints, Activity, Flame as FireIcon, BellRing, PlusCircle } from 'lucide-react';
+import { Flame, Play, CheckCircle2, Send, Sparkles, AlertCircle, ArrowRight, Shield, Heart, BatteryCharging, Footprints, Activity, Flame as FireIcon, BellRing, PlusCircle, RefreshCw, Sun } from 'lucide-react';
 import { playUiClick, playWarningSound, triggerHaptic, playSystemTingSound } from '../utils/audio.ts';
 
 interface DashboardViewProps {
@@ -31,6 +31,36 @@ export function DashboardView({
   const [inputMsg, setInputMsg] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+
+  // AI Morning Health Briefing state
+  const [briefing, setBriefing] = useState<{
+    date: string;
+    readinessScore: number;
+    headline: string;
+    analysis: string;
+    recommendation: string;
+    suggestedFocus: string;
+  } | null>(null);
+  const [isLoadingBriefing, setIsLoadingBriefing] = useState(false);
+
+  const fetchBriefing = async () => {
+    setIsLoadingBriefing(true);
+    try {
+      const res = await fetch('/api/health-briefing');
+      const data = await res.json();
+      if (data.briefing) {
+        setBriefing(data.briefing);
+      }
+    } catch (e) {
+      console.error('Failed to load health briefing', e);
+    } finally {
+      setIsLoadingBriefing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBriefing();
+  }, []);
 
   const xpPercent = Math.min(100, Math.round((player.xp / player.currentLevelMaxXp) * 100));
 
@@ -105,6 +135,78 @@ export function DashboardView({
           </button>
         </div>
       )}
+
+      {/* 0. AI MORNING HEALTH BRIEFING (SOLO LEVELING DAILY SYSTEM DIRECTIVE) */}
+      <section className="bg-[#060b16] border-2 border-sky-500/60 rounded-sm p-4.5 system-bracket shadow-[0_0_25px_rgba(56,189,248,0.15)] relative overflow-hidden">
+        <div className="flex items-center justify-between border-b border-sky-950/60 pb-2.5 mb-3">
+          <div className="flex items-center gap-2">
+            <Sun className="w-4 h-4 text-sky-400 animate-pulse" />
+            <span className="text-xs font-mono-system font-bold tracking-wider text-sky-300 uppercase">
+              08:00 AM // SYSTEM HEALTH BRIEFING (รายงานสุขภาพและความพร้อมประจำวัน)
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              playUiClick();
+              fetchBriefing();
+            }}
+            disabled={isLoadingBriefing}
+            className="text-[10px] font-mono-system text-slate-400 hover:text-sky-300 flex items-center gap-1 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3 h-3 ${isLoadingBriefing ? 'animate-spin' : ''}`} />
+            <span>{isLoadingBriefing ? 'ANALYZING...' : 'RE-ANALYZE'}</span>
+          </button>
+        </div>
+
+        {briefing ? (
+          <div className="space-y-3 font-mono-system text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-slate-950/80 border border-sky-950 rounded-sm">
+              <div className="space-y-1">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider">
+                  SYSTEM READINESS ASSESSMENT
+                </div>
+                <div className="text-sm font-sans font-bold text-white tracking-wide">
+                  {briefing.headline}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-auto px-3 py-1.5 rounded bg-sky-950/70 border border-sky-500/50">
+                <span className="text-[11px] text-sky-300">ความพร้อม:</span>
+                <span className="text-lg font-black text-sky-200">
+                  {briefing.readinessScore}/100
+                </span>
+              </div>
+            </div>
+
+            <p className="text-slate-300 text-xs font-sans leading-relaxed">
+              {briefing.analysis}
+            </p>
+
+            <div className="p-3 bg-slate-950/90 border-l-2 border-sky-400 rounded-r-sm space-y-1 font-sans">
+              <div className="text-[10px] font-mono-system text-sky-400 font-bold uppercase tracking-wider">
+                คำสั่งปฏิบัติการประจำวัน (DAILY DIRECTIVE)
+              </div>
+              <div className="text-xs text-slate-200 leading-relaxed">
+                {briefing.recommendation}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+              <span>เป้าหมายเน้นวันนี้: <strong className="text-sky-300">{briefing.suggestedFocus}</strong></span>
+              <span className="text-[10px] text-slate-500">LINE NOTIFICATION: 08:00 AM AUTO PUSH</span>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 text-center text-xs text-slate-400 font-mono-system space-y-2">
+            <div>กำลังโหลดข้อมูลการประเมินสภาพร่างกายประจำวันจาก Gemini AI...</div>
+            <button
+              onClick={fetchBriefing}
+              className="px-3 py-1.5 rounded bg-sky-950 border border-sky-500/40 text-sky-300 text-xs font-bold"
+            >
+              ดึงรายงานสุขภาพ
+            </button>
+          </div>
+        )}
+      </section>
 
       {/* 1. SYSTEM TERMINAL: PLAYER STATUS (SOLO LEVELING THEME) */}
       <section className="bg-[#080d1a] border border-cyan-950 rounded-sm p-5 system-bracket shadow-[0_4px_20px_rgba(0,0,0,0.5)]">

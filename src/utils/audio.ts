@@ -156,6 +156,45 @@ export function playPenaltyAlertSound() {
   } catch {}
 }
 
+// Exercise Metronome / Cadence Beep
+export function playMetronomeTick(isAccent = false) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    const freq = isAccent ? 1200 : 750;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(isAccent ? 0.12 : 0.06, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.05);
+  } catch {}
+}
+
+// Countdown Beep (3, 2, 1 before starting or rest end)
+export function playCountdownBeep(isGo = false) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = isGo ? 'triangle' : 'sine';
+    const freq = isGo ? 1760 : 880; // A6 for GO, A5 for countdown
+    const dur = isGo ? 0.25 : 0.09;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + dur);
+  } catch {}
+}
+
 // Subtle Haptic Feedback
 export function triggerHaptic(type: 'light' | 'medium' | 'success' | 'warning' = 'light') {
   if (typeof window !== 'undefined' && 'vibrate' in navigator) {
