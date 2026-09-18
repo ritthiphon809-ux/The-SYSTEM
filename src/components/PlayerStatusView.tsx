@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { Player, PlayerStats } from '../types.ts';
-import { Shield, Dumbbell, Activity, Heart, Brain, PlusCircle, BatteryCharging, ChevronDown, ChevronUp } from 'lucide-react';
+import { Shield, Dumbbell, Activity, Heart, Brain, PlusCircle, BatteryCharging, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { playUiClick } from '../utils/audio.ts';
 
 interface PlayerStatusViewProps {
   player: Player;
   onAllocateStat?: (stat: 'STR' | 'AGI' | 'VIT' | 'INT') => void;
+  onResetDemo?: (mode?: 'demo' | 'new') => void;
 }
 
-export function PlayerStatusView({ player, onAllocateStat }: PlayerStatusViewProps) {
+export function PlayerStatusView({ player, onAllocateStat, onResetDemo }: PlayerStatusViewProps) {
   const [showRankDetails, setShowRankDetails] = useState(false);
 
   const xpPercent = Math.min(100, Math.round((player.xp / player.currentLevelMaxXp) * 100));
@@ -315,6 +316,25 @@ export function PlayerStatusView({ player, onAllocateStat }: PlayerStatusViewPro
           </div>
         )}
       </section>
+
+      {/* Quick Reset Option for Sandbox Testing */}
+      {onResetDemo && (
+        <section className="flex flex-wrap items-center justify-between gap-2 p-3 bg-[#060a14] border border-slate-900 rounded-sm font-mono-system text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>ต้องการรีเซ็ตค่าสเตตัส / ความคืบหน้ากลับสู่ค่าเริ่มต้น?</span>
+          </div>
+          <button
+            onClick={() => {
+              playUiClick();
+              onResetDemo('demo');
+            }}
+            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500/50 text-cyan-300 transition-colors"
+          >
+            RESET DEMO
+          </button>
+        </section>
+      )}
     </div>
   );
 }

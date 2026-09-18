@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Volume2, VolumeX, ShieldAlert, Cpu, Terminal } from 'lucide-react';
+import { Volume2, VolumeX, ShieldAlert, Cpu, Terminal, RefreshCw } from 'lucide-react';
 import { toggleAudio, isAudioEnabled, playUiClick } from '../utils/audio.ts';
 import { Player } from '../types.ts';
 
 interface SystemHeaderProps {
   player: Player;
-  onResetDemo: () => void;
+  onResetDemo: (mode?: 'demo' | 'new') => void;
   onOpenHunterProfile?: () => void;
 }
 
@@ -74,19 +74,17 @@ export function SystemHeader({ player, onResetDemo, onOpenHunterProfile }: Syste
             </button>
           )}
 
-          {player.isDemo && (
-            <button
-              onClick={() => {
-                playUiClick();
-                onResetDemo();
-              }}
-              title="Reset to Demo State (Specification #35)"
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500/50 text-[11px] font-mono-system text-slate-300 hover:text-cyan-300 transition-colors"
-            >
-              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
-              <span>TEST SUBJECT</span>
-            </button>
-          )}
+          <button
+            onClick={() => {
+              playUiClick();
+              onResetDemo('demo');
+            }}
+            title="รีเซ็ตข้อมูลตัวละครและเควสต์ (Reset Demo State)"
+            className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900/90 border border-slate-750 hover:border-cyan-500/60 text-[11px] font-mono-system text-slate-300 hover:text-cyan-300 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">RESET</span>
+          </button>
 
           <button
             onClick={handleAudioToggle}

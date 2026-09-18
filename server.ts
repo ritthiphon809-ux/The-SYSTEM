@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { Player, Quest, SystemEvent, WorkoutLog, PendingReminder, Rank } from './src/types.ts';
 import {
+  INITIAL_PLAYER_STATE,
   DEMO_PLAYER_STATE,
   FALLBACK_DAILY_QUESTS,
   PENALTY_QUEST_TEMPLATE,
@@ -520,13 +521,29 @@ async function startServer() {
     });
   });
 
-  // 3. Reset to Demo State (Specification #35 Demo Player)
-  app.post('/api/player/reset-demo', (_req, res) => {
-    currentPlayer = { ...DEMO_PLAYER_STATE };
+  // 3. Reset to Demo or New Hunter State
+  const executeReset = (mode: string = 'demo') => {
+    if (mode === 'new') {
+      currentPlayer = {
+        ...INITIAL_PLAYER_STATE,
+        id: `hunter-${Date.now()}`,
+        displayName: 'AWAKENED HUNTER',
+        isDemo: false,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString()
+      };
+    } else {
+      currentPlayer = {
+        ...DEMO_PLAYER_STATE,
+        createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
+        lastActiveAt: new Date().toISOString()
+      };
+    }
+
     currentQuest = {
       id: `quest-${Date.now()}`,
-      title: 'Squat Protocol',
-      description: 'Perform 20 controlled squats with full depth.',
+      title: 'Squat Protocol (โพรโทคอลสควอท)',
+      description: 'ปฏิบัติท่าสควอท 20 ครั้งด้วยฟอร์มที่ถูกต้องและลงลึกสม่ำเสมอ รักษาแนวกระดูกสันหลังให้มั่นคง',
       type: 'STRENGTH',
       difficulty: 'EASY',
       target: 20,
@@ -535,18 +552,72 @@ async function startServer() {
       statRewards: { VIT: 1, STR: 1 },
       deadline: '21:00',
       status: 'AVAILABLE',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      steps: [
+        { id: 'step-1', name: 'สควอทบอดี้เวท (Bodyweight Squats)', targetReps: 10, sets: 2, completed: false },
+        { id: 'step-2', name: 'ยืดเหยียดสะโพกและเอ็นร้อยหวาย (Hip Stretch)', targetSeconds: 60, sets: 1, completed: false }
+      ]
     };
+
     eventLogs = [
       {
-        id: `evt-${Date.now()}`,
+        id: `evt-${Date.now()}-1`,
         type: 'QUEST_CREATED',
-        title: 'Demo Session Reset',
-        description: 'Test Subject parameters reloaded (LV. 3 | RANK E | STREAK 7).',
+        title: mode === 'new' ? 'System Initialized: New Hunter' : 'Demo Session Reset',
+        description:
+          mode === 'new'
+            ? 'New Hunter calibration complete (LV. 1 | RANK E | XP 0/100).'
+            : 'Test Subject parameters reloaded (LV. 3 | RANK E | STREAK 7).',
         timestamp: new Date().toISOString()
+      },
+      {
+        id: `evt-${Date.now()}-2`,
+        type: 'STREAK_INCREASED',
+        title: mode === 'new' ? 'Day 0: Awakening' : 'Streak Maintained: 7 Days',
+        description: mode === 'new' ? 'Hunter awakened into The System.' : 'Biological adherence verified over 7 consecutive solar cycles.',
+        timestamp: new Date(Date.now() - 3600000).toISOString()
       }
     ];
-    res.json({ success: true, player: currentPlayer, quest: currentQuest });
+
+    workoutLogs = [
+      {
+        id: `wk-${Date.now()}`,
+        title: 'Calisthenics Conditioning',
+        durationMinutes: 20,
+        xpEarned: 50,
+        statsEarned: { STR: 1 },
+        date: new Date(Date.now() - 86400000).toISOString(),
+        source: 'WEB'
+      }
+    ];
+
+    pendingReminders.length = 0;
+  };
+
+  app.post('/api/player/reset-demo', (req, res) => {
+    const mode = req.body?.mode || 'demo';
+    executeReset(mode);
+    res.json({
+      success: true,
+      mode,
+      player: currentPlayer,
+      quest: currentQuest,
+      events: eventLogs,
+      workouts: workoutLogs
+    });
+  });
+
+  app.post('/api/player/reset', (req, res) => {
+    const mode = req.body?.mode || 'demo';
+    executeReset(mode);
+    res.json({
+      success: true,
+      mode,
+      player: currentPlayer,
+      quest: currentQuest,
+      events: eventLogs,
+      workouts: workoutLogs
+    });
   });
 
   // 4. Get Current Daily Quest

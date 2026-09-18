@@ -5,7 +5,8 @@
 
 import { useState, useEffect } from 'react';
 import { Player, Quest, SystemEvent, WorkoutLog, QuestDifficulty } from './types.ts';
-import { DEMO_PLAYER_STATE } from './modules/game-engine.ts';
+import { DEMO_PLAYER_STATE, INITIAL_PLAYER_STATE } from './modules/game-engine.ts';
+import { RefreshCw } from 'lucide-react';
 import { SystemHeader } from './components/SystemHeader.tsx';
 import { Navigation, NavTab } from './components/Navigation.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
@@ -52,6 +53,7 @@ export default function App() {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [systemToast, setSystemToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // Level Up Modal State
   const [levelUpState, setLevelUpState] = useState<{
@@ -426,16 +428,45 @@ export default function App() {
     }
   };
 
-  // 13. Reset Demo State
-  const handleResetDemo = async () => {
+  // 13. Reset System & Player State
+  const handleResetDemo = async (mode: 'demo' | 'new' = 'demo'): Promise<boolean> => {
     try {
-      const res = await fetch('/api/player/reset-demo', { method: 'POST' });
+      const res = await fetch('/api/player/reset-demo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
       const data = await res.json();
       if (data.player) setPlayer(data.player);
       if (data.quest) setQuest(data.quest);
-      refreshData();
+      if (data.events) setEvents(data.events);
+      if (data.workouts) setWorkouts(data.workouts);
+      if (mode === 'new') {
+        localStorage.removeItem('the_system_registered');
+      }
+      playLevelUpSound();
+      triggerHaptic('success');
+      setSystemToast({
+        type: 'success',
+        message:
+          mode === 'new'
+            ? 'SYSTEM REBOOT: ล้างข้อมูลเริ่มต้นใหม่เป็น Hunter เลเวล 1 จากศูนย์เรียบร้อยแล้ว'
+            : 'SYSTEM REBOOT: รีเซ็ตข้อมูลเป็น Demo Test Subject (LV. 3 | XP 320/500) เรียบร้อยแล้ว'
+      });
+      setTimeout(() => setSystemToast(null), 4500);
+      await refreshData();
+      return true;
     } catch (e) {
-      setPlayer(DEMO_PLAYER_STATE);
+      console.error('Reset error:', e);
+      const fallback = mode === 'new' ? INITIAL_PLAYER_STATE : DEMO_PLAYER_STATE;
+      setPlayer(fallback);
+      playSystemTingSound();
+      setSystemToast({
+        type: 'info',
+        message: 'SYSTEM REBOOT: รีเซ็ตข้อมูลในหน่วยความจำเรียบร้อยแล้ว'
+      });
+      setTimeout(() => setSystemToast(null), 4500);
+      return true;
     }
   };
 
@@ -488,6 +519,7 @@ export default function App() {
           <PlayerStatusView
             player={player}
             onAllocateStat={handleAllocateStat}
+            onResetDemo={handleResetDemo}
           />
         )}
 
@@ -547,6 +579,26 @@ export default function App() {
         lineOaBasicId={lineOaBasicId}
         lineLoginConfigured={lineLoginConfigured}
       />
+
+      {/* Global System HUD Notification Toast */}
+      {systemToast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 max-w-md w-[92%] p-3 rounded bg-[#060c18]/95 border border-cyan-400/80 shadow-[0_0_25px_rgba(56,189,248,0.45)] backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded bg-cyan-950 border border-cyan-400 flex items-center justify-center text-cyan-300 shrink-0">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-mono-system font-bold text-cyan-400 uppercase tracking-widest flex items-center justify-between">
+                <span>[SYSTEM PROTOCOL REBOOT]</span>
+                <span className="text-[9px] text-emerald-400">EXECUTED</span>
+              </div>
+              <div className="text-xs text-slate-100 font-sans mt-0.5 font-medium leading-tight">
+                {systemToast.message}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

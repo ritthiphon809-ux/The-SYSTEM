@@ -28,7 +28,7 @@ import { promptPwaInstall, canInstallPwa } from '../utils/pwa.ts';
 interface SettingsViewProps {
   player: Player;
   quest: Quest;
-  onResetDemo: () => void;
+  onResetDemo: (mode?: 'demo' | 'new') => Promise<boolean | void> | void;
   onCompleteQuest: () => Promise<void>;
 }
 
@@ -66,6 +66,33 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
   ]);
   const [installAvailable, setInstallAvailable] = useState(canInstallPwa());
   const [reminders, setReminders] = useState<PendingReminder[]>([]);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetConfirmMode, setResetConfirmMode] = useState<'demo' | 'new' | null>(null);
+  const [resetFeedback, setResetFeedback] = useState<string | null>(null);
+
+  const handleExecuteReset = async (mode: 'demo' | 'new') => {
+    playUiClick();
+    setIsResetting(true);
+    setResetFeedback(null);
+    try {
+      await onResetDemo(mode);
+      playLevelUpSound();
+      setResetFeedback(
+        mode === 'new'
+          ? '[SYSTEM REBOOT] ล้างข้อมูลทั้งหมด เริ่มต้นใหม่เป็น Hunter LV. 1 เรียบร้อยแล้ว'
+          : '[SYSTEM REBOOT] รีเซ็ตข้อมูลเป็น Demo Test Subject (LV. 3 | XP 320/500) เรียบร้อยแล้ว'
+      );
+      setResetConfirmMode(null);
+      await fetchLineStatus();
+      await fetchReminders();
+    } catch (e) {
+      playWarningSound();
+      setResetFeedback('[SYSTEM ERROR] การรีเซ็ตล้มเหลว กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsResetting(false);
+      setTimeout(() => setResetFeedback(null), 5000);
+    }
+  };
 
   const fetchReminders = async () => {
     try {
@@ -676,28 +703,149 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
             </button>
           </section>
 
-          {/* Reset Demo Data */}
-          <section className="bg-[#080d1a] border border-slate-900 rounded-sm p-4 system-bracket">
-            <div className="flex items-center justify-between">
+          {/* Reset System & Player Data */}
+          <section className="bg-[#080d1a] border border-slate-900 rounded-sm p-4 system-bracket space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-900 pb-2">
               <div>
-                <h3 className="text-xs font-mono-system font-bold text-slate-300 uppercase tracking-wider">
-                  RESET DATA TO DEFAULT
+                <h3 className="text-xs font-mono-system font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isResetting ? 'animate-spin' : ''}`} />
+                  <span>SYSTEM DATA RESET (รีเซ็ตข้อมูลระบบ)</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  รีเซ็ตข้อมูลตัวละครเป็น LV. 3, Rank E, XP 320/500
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  รีเซ็ตข้อมูลตัวละคร เควสต์ และสถิติให้กลับเป็นค่าเริ่มต้นตามที่ต้องการ
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  playUiClick();
-                  onResetDemo();
-                }}
-                className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 font-mono-system text-xs uppercase flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3 h-3 text-cyan-400" />
-                <span>RESET DEMO</span>
-              </button>
+
+              {/* Current Status Badge */}
+              <div className="text-right font-mono-system text-[10px] hidden sm:block">
+                <span className="text-slate-500">CURRENT: </span>
+                <span className="text-cyan-300 font-bold">{player.displayName}</span>
+                <span className="text-slate-600"> | </span>
+                <span className="text-amber-400 font-bold">LV. {player.level}</span>
+                <span className="text-slate-600"> | </span>
+                <span className="text-emerald-400 font-bold">RANK {player.rank}</span>
+              </div>
             </div>
+
+            {/* Current Active Specs Strip */}
+            <div className="p-2 bg-slate-950/80 border border-slate-900 rounded text-xs font-mono-system flex flex-wrap items-center justify-between gap-2 text-slate-400">
+              <div>
+                <span>ตัวละครปัจจุบัน: </span>
+                <strong className="text-slate-200">{player.displayName}</strong>
+                <span className="ml-2 text-slate-500">({player.isDemo ? 'โหมด Demo' : 'ผู้เล่นจริง'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>XP: <strong className="text-cyan-300">{player.xp}/{player.currentLevelMaxXp}</strong></span>
+                <span>Streak: <strong className="text-amber-300">{player.streak} วัน</strong></span>
+                <span>Stat Points: <strong className="text-emerald-300">{player.statPoints}</strong></span>
+              </div>
+            </div>
+
+            {/* Feedback Alert if present */}
+            {resetFeedback && (
+              <div className={`p-2.5 rounded font-mono-system text-xs flex items-center gap-2 animate-in fade-in duration-200 ${
+                resetFeedback.includes('ERROR')
+                  ? 'bg-rose-950/70 border border-rose-500/50 text-rose-200'
+                  : 'bg-emerald-950/70 border border-emerald-500/50 text-emerald-200'
+              }`}>
+                {resetFeedback.includes('ERROR') ? (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                )}
+                <span>{resetFeedback}</span>
+              </div>
+            )}
+
+            {/* Confirmation Box (when clicked) */}
+            {resetConfirmMode && (
+              <div className="p-3 bg-amber-950/30 border border-amber-500/40 rounded space-y-2.5 animate-in fade-in duration-150">
+                <div className="flex items-center gap-2 text-amber-300 font-bold text-xs font-mono-system">
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                  <span>
+                    ยืนยันการ{resetConfirmMode === 'new' ? 'ล้างข้อมูลเป็นผู้เล่นใหม่ (LV. 1)' : 'รีเซ็ตเป็น Demo Subject (LV. 3)'} ใช่หรือไม่?
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 font-sans">
+                  {resetConfirmMode === 'new'
+                    ? 'ข้อมูลทั้งหมดจะถูกรีเซ็ตเป็น Level 1, 0 XP, ค่าสเตตัสเริ่มต้น 5 หน่วย และรีโหลดเควสต์ใหม่'
+                    : 'ข้อมูลตัวละครจะถูกรีเซ็ตเป็น Test Subject เลเวล 3, Rank E, XP 320/500, สถิติ 7 วัน และเควสต์ Squat Protocol'}
+                </p>
+                <div className="flex items-center gap-2 font-mono-system text-xs">
+                  <button
+                    onClick={() => handleExecuteReset(resetConfirmMode)}
+                    disabled={isResetting}
+                    className="px-3.5 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isResetting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    <span>ยืนยันดำเนินการ</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      playUiClick();
+                      setResetConfirmMode(null);
+                    }}
+                    disabled={isResetting}
+                    className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300"
+                  >
+                    ยกเลิก
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reset Action Buttons */}
+            {!resetConfirmMode && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                {/* 1. Reset to Demo State */}
+                <div className="p-3 bg-slate-950 border border-cyan-950/60 rounded flex flex-col justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-mono-system font-bold text-cyan-300 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>DEMO SPEC #35 (LV. 3)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                      รีเซ็ตเป็น TEST SUBJECT (LV. 3, Rank E, XP 320/500, Streak 7 วัน) พร้อมเควสต์ Squat 20 ครั้ง
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      playUiClick();
+                      setResetConfirmMode('demo');
+                    }}
+                    disabled={isResetting}
+                    className="w-full mt-2 py-2 px-3 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-mono-system text-xs uppercase font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isResetting ? 'animate-spin' : ''}`} />
+                    <span>{isResetting ? 'กำลังรีเซ็ต...' : 'รีเซ็ตเป็น DEMO (LV. 3)'}</span>
+                  </button>
+                </div>
+
+                {/* 2. Reset to New Hunter */}
+                <div className="p-3 bg-slate-950 border border-slate-900 rounded flex flex-col justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-mono-system font-bold text-slate-300 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-slate-400" />
+                      <span>FACTORY RESET (LV. 1)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                      ล้างข้อมูลเริ่มต้นใหม่จากศูนย์เป็น Hunter เลเวล 1, XP 0/100, สถิติใหม่ทั้งหมด
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      playUiClick();
+                      setResetConfirmMode('new');
+                    }}
+                    disabled={isResetting}
+                    className="w-full mt-2 py-2 px-3 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 text-slate-300 font-mono-system text-xs uppercase font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${isResetting ? 'animate-spin' : ''}`} />
+                    <span>{isResetting ? 'กำลังรีเซ็ต...' : 'เริ่มต้นใหม่จากศูนย์ (LV. 1)'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         </div>
       )}

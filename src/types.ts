@@ -52,6 +52,10 @@ export interface Player {
   fitnessGoal?: 'FAT_LOSS' | 'MUSCLE_GAIN' | 'ENDURANCE' | 'SOLO_LEVELING';
   weightKg?: number;
   heightCm?: number;
+  // Feature 2: Boss Quest & Achievements
+  weeklyBossesCleared?: number;
+  titles?: string[];
+  badges?: string[];
 }
 
 export type QuestDifficulty = 'EASY' | 'NORMAL' | 'HARD' | 'ELITE';
@@ -85,6 +89,7 @@ export interface Quest {
   completedAt?: string;
   isPenalty?: boolean;
   isEmergency?: boolean;
+  isWeeklyBoss?: boolean;
   steps?: QuestStep[];
 }
 
@@ -109,7 +114,13 @@ export type SystemEventType =
   | 'STATUS_SYNC'
   | 'RANK_DOWN'
   | 'DEBUFF_APPLIED'
-  | 'REST_DAY_ACTIVATED';
+  | 'REST_DAY_ACTIVATED'
+  | 'EMERGENCY_QUEST_CREATED'
+  | 'EMERGENCY_QUEST_COMPLETED'
+  | 'BOSS_QUEST_CREATED'
+  | 'BOSS_QUEST_COMPLETED'
+  | 'RANK_UP_DRAMATIC'
+  | 'REFLECTION_EVALUATED';
 
 export interface SystemEvent {
   id: string;

@@ -61,6 +61,9 @@ export const INITIAL_PLAYER_STATE: Player = {
   createdAt: new Date().toISOString(),
   lastActiveAt: new Date().toISOString(),
   missedDeadlineStreak: 0,
+  weeklyBossesCleared: 0,
+  titles: [],
+  badges: [],
   isDemo: false
 };
 
@@ -98,6 +101,9 @@ export const DEMO_PLAYER_STATE: Player = {
   createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
   lastActiveAt: new Date().toISOString(),
   missedDeadlineStreak: 0,
+  weeklyBossesCleared: 1,
+  titles: ['SHADOW INITIATE'],
+  badges: ['WEEKLY_BOSS_VANQUISHER'],
   isDemo: true
 };
 
