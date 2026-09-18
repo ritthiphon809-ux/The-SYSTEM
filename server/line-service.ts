@@ -309,6 +309,197 @@ export function createCompletionFlexMessage(quest: Quest, player: Player): LineF
   };
 }
 
+// Generate dramatic Rank-Up announcement Flex Message.
+// The previous rank is derived from the rank ladder because the function receives the new rank.
+export function createRankUpFlexMessage(newRank: string, player: Player): LineFlexMessage {
+  const rankOrder = ['E', 'D', 'C', 'B', 'A', 'S'];
+  const newIndex = Math.max(0, rankOrder.indexOf(newRank));
+  const oldRank = rankOrder[Math.max(0, newIndex - 1)] || newRank;
+
+  return {
+    type: 'flex',
+    altText: `[SYSTEM] RANK UP — ${oldRank} → ${newRank}`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#241604',
+        paddingAll: '24px',
+        contents: [
+          {
+            type: 'text',
+            text: '[SYSTEM AUTHORITY UPDATE]',
+            color: '#f8d27a',
+            size: 'xs',
+            weight: 'bold',
+            align: 'center'
+          },
+          {
+            type: 'text',
+            text: 'RANK UP',
+            color: '#fff7d6',
+            size: 'xxl',
+            weight: 'bold',
+            align: 'center',
+            margin: 'md'
+          },
+          {
+            type: 'text',
+            text: 'AUTHORIZATION LEVEL ASCENDED',
+            color: '#d6b56b',
+            size: 'xxs',
+            weight: 'bold',
+            align: 'center',
+            margin: 'xs'
+          }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#0b0a08',
+        paddingAll: '24px',
+        spacing: 'lg',
+        contents: [
+          {
+            type: 'box',
+            layout: 'horizontal',
+            justifyContent: 'center',
+            alignItems: 'center',
+            contents: [
+              { type: 'text', text: `RANK ${oldRank}`, color: '#94a3b8', size: 'lg', weight: 'bold', align: 'center', flex: 1 },
+              { type: 'text', text: '→', color: '#f8d27a', size: 'xl', weight: 'bold', align: 'center', flex: 0 },
+              { type: 'text', text: `RANK ${newRank}`, color: '#f8d27a', size: 'xl', weight: 'bold', align: 'center', flex: 1 }
+            ]
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#17130b',
+            cornerRadius: '8px',
+            paddingAll: '16px',
+            borderColor: '#6b4f16',
+            borderWidth: '1px',
+            contents: [
+              { type: 'text', text: player.displayName, color: '#ffffff', size: 'md', weight: 'bold', align: 'center' },
+              { type: 'text', text: `LV. ${String(player.level).padStart(2, '0')}`, color: '#f8d27a', size: 'sm', weight: 'bold', align: 'center', margin: 'xs' }
+            ]
+          },
+          {
+            type: 'box',
+            layout: 'horizontal',
+            spacing: 'md',
+            contents: [
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'STREAK', color: '#64748b', size: 'xxs', align: 'center' },
+                  { type: 'text', text: `${player.streak} DAYS`, color: '#fbbf24', size: 'md', weight: 'bold', align: 'center', margin: 'xs' }
+                ]
+              },
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'XP', color: '#64748b', size: 'xxs', align: 'center' },
+                  { type: 'text', text: `${player.xp}/${player.currentLevelMaxXp}`, color: '#38bdf8', size: 'md', weight: 'bold', align: 'center', margin: 'xs' }
+                ]
+              },
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'QUESTS', color: '#64748b', size: 'xxs', align: 'center' },
+                  { type: 'text', text: `${player.totalQuestCompleted}`, color: '#34d399', size: 'md', weight: 'bold', align: 'center', margin: 'xs' }
+                ]
+              }
+            ]
+          },
+          {
+            type: 'text',
+            text: 'ขีดจำกัดเดิมถูกทำลายแล้ว ระดับสิทธิ์ของผู้เล่นได้รับการยกระดับ',
+            color: '#cbd5e1',
+            size: 'xs',
+            wrap: true,
+            align: 'center'
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#0b0a08',
+        paddingAll: '16px',
+        contents: [
+          {
+            type: 'text',
+            text: '[ SYSTEM RECORD UPDATED ]',
+            color: '#a78bfa',
+            size: 'xxs',
+            weight: 'bold',
+            align: 'center'
+          }
+        ]
+      }
+    }
+  };
+}
+
+// Generate the special celebration card used when a Weekly Boss is cleared.
+export function createWeeklyBossClearedFlexMessage(quest: Quest, player: Player): LineFlexMessage {
+  return {
+    type: 'flex',
+    altText: `[SYSTEM] WEEKLY BOSS CLEARED — +${quest.xpReward} XP`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#241604',
+        paddingAll: '24px',
+        contents: [
+          { type: 'text', text: '[SYSTEM SPECIAL REWARD]', color: '#f8d27a', size: 'xs', weight: 'bold', align: 'center' },
+          { type: 'text', text: 'WEEKLY BOSS CLEARED', color: '#fff7d6', size: 'xl', weight: 'bold', align: 'center', margin: 'md' },
+          { type: 'text', text: 'TITLE / BADGE UNLOCKED', color: '#d6b56b', size: 'xxs', weight: 'bold', align: 'center', margin: 'xs' }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#0b0a08',
+        paddingAll: '24px',
+        spacing: 'md',
+        contents: [
+          { type: 'text', text: quest.title, color: '#ffffff', size: 'md', weight: 'bold', wrap: true, align: 'center' },
+          { type: 'text', text: `+${quest.xpReward} XP`, color: '#f8d27a', size: 'xxl', weight: 'bold', align: 'center', margin: 'sm' },
+          { type: 'text', text: `WEEKLY BOSSES CLEARED: ${player.weeklyBossesCleared || 0}`, color: '#fbbf24', size: 'sm', weight: 'bold', align: 'center' },
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#17130b',
+            cornerRadius: '8px',
+            paddingAll: '14px',
+            borderColor: '#6b4f16',
+            borderWidth: '1px',
+            contents: [
+              { type: 'text', text: 'UNLOCKED', color: '#64748b', size: 'xxs', align: 'center' },
+              { type: 'text', text: 'WEEKLY BOSS VANQUISHER', color: '#f8d27a', size: 'md', weight: 'bold', align: 'center', margin: 'xs', wrap: true },
+              { type: 'text', text: 'TITLE + BADGE', color: '#cbd5e1', size: 'xxs', align: 'center', margin: 'xs' }
+            ]
+          }
+        ]
+      }
+    }
+  };
+}
+
 // Generate LINE Status Flex Message
 export function createStatusFlexMessage(player: Player, appUrl: string): LineFlexMessage {
   const xpPercent = Math.min(100, Math.round((player.xp / player.currentLevelMaxXp) * 100));
