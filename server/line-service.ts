@@ -14,6 +14,103 @@ export function verifyLineSignature(body: string, signature: string, channelSecr
 export function createQuestFlexMessage(quest: Quest, appUrl: string): LineFlexMessage {
   const questUrl = `${appUrl}/quest`;
 
+  // Build step contents for checklist or fallback description
+  const cardContents: any[] = [];
+
+  if (quest.steps && quest.steps.length > 0) {
+    cardContents.push({
+      type: 'text',
+      text: `${quest.title.toUpperCase()}`,
+      color: '#38bdf8',
+      size: 'md',
+      weight: 'bold'
+    });
+
+    if (quest.description) {
+      cardContents.push({
+        type: 'text',
+        text: quest.description,
+        color: '#94a3b8',
+        size: 'xs',
+        wrap: true,
+        margin: 'sm'
+      });
+    }
+
+    cardContents.push({
+      type: 'box',
+      layout: 'vertical',
+      margin: 'md',
+      spacing: 'sm',
+      contents: quest.steps.map((step) => {
+        const isDone = Boolean(step.completed);
+        const icon = isDone ? '☑' : '◯';
+        const iconColor = isDone ? '#10b981' : '#38bdf8';
+        let details = '';
+        if (step.sets && step.sets > 1) {
+          details += `${step.sets} เซ็ต `;
+        }
+        if (step.targetReps) {
+          details += `× ${step.targetReps} ครั้ง`;
+        } else if (step.targetSeconds) {
+          details += `× ${step.targetSeconds} วิ`;
+        }
+        const fullText = details ? `${step.name} (${details.trim()})` : step.name;
+
+        return {
+          type: 'box',
+          layout: 'horizontal',
+          spacing: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: icon,
+              color: iconColor,
+              size: 'sm',
+              flex: 0,
+              weight: 'bold'
+            },
+            {
+              type: 'text',
+              text: fullText,
+              color: isDone ? '#64748b' : '#f1f5f9',
+              size: 'xs',
+              wrap: true,
+              flex: 1
+            }
+          ]
+        };
+      })
+    });
+  } else {
+    // Backward compatibility: original layout for quests without steps
+    cardContents.push(
+      {
+        type: 'text',
+        text: `${quest.title.toUpperCase()}`,
+        color: '#38bdf8',
+        size: 'md',
+        weight: 'bold'
+      },
+      {
+        type: 'text',
+        text: `${quest.target} ${quest.unit.toUpperCase()}`,
+        color: '#f8fafc',
+        size: 'xxl',
+        weight: 'bold',
+        margin: 'sm'
+      },
+      {
+        type: 'text',
+        text: quest.description,
+        color: '#94a3b8',
+        size: 'xs',
+        wrap: true,
+        margin: 'md'
+      }
+    );
+  }
+
   return {
     type: 'flex',
     altText: `[SYSTEM] DAILY QUEST: ${quest.title.toUpperCase()}`,
@@ -57,31 +154,7 @@ export function createQuestFlexMessage(quest: Quest, appUrl: string): LineFlexMe
             paddingAll: '15px',
             borderColor: '#1e293b',
             borderWidth: '1px',
-            contents: [
-              {
-                type: 'text',
-                text: `${quest.title.toUpperCase()}`,
-                color: '#38bdf8',
-                size: 'md',
-                weight: 'bold'
-              },
-              {
-                type: 'text',
-                text: `${quest.target} ${quest.unit.toUpperCase()}`,
-                color: '#f8fafc',
-                size: 'xxl',
-                weight: 'bold',
-                margin: 'sm'
-              },
-              {
-                type: 'text',
-                text: quest.description,
-                color: '#94a3b8',
-                size: 'xs',
-                wrap: true,
-                margin: 'md'
-              }
-            ]
+            contents: cardContents
           },
           {
             type: 'box',

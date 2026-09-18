@@ -355,8 +355,8 @@ export function syncHealthKitData(
 export function createEmergencyQuest(player: Player): Quest {
   return {
     id: `quest-emergency-${Date.now()}`,
-    title: 'EMERGENCY QUEST: SURVIVAL SPRINT',
-    description: 'Critical inactivity or physiological distress detected. Move 500 steps within 10 minutes to avert Penalty Zone.',
+    title: 'EMERGENCY QUEST: SURVIVAL SPRINT (วิ่งหนีเอาชีวิตรอด)',
+    description: 'ตรวจพบสภาวะร่างกายหยุดนิ่งจนเสี่ยงต่ออันตราย ต้องเดินหรือวิ่งให้ครบ 500 ก้าวภายใน 10 นาทีเพื่อหลีกเลี่ยง Penalty Zone',
     type: 'EMERGENCY',
     difficulty: 'HARD',
     target: 500,
@@ -366,7 +366,10 @@ export function createEmergencyQuest(player: Player): Quest {
     deadline: new Date(Date.now() + 10 * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     status: 'AVAILABLE',
     createdAt: new Date().toISOString(),
-    isEmergency: true
+    isEmergency: true,
+    steps: [
+      { id: 'em-step-1', name: 'เดินเร็วหรือวิ่งจ๊อกกิ้งเร่งฝีเท้า', targetReps: 500, sets: 1, completed: false }
+    ]
   };
 }
 
@@ -374,8 +377,8 @@ export function createEmergencyQuest(player: Player): Quest {
 export function createPenaltyZoneQuest(): Quest {
   return {
     id: `quest-penalty-${Date.now()}`,
-    title: 'PENALTY QUEST: SURVIVE THE CENTIPEDES',
-    description: 'HP reached 0. You have been transported to the Penalty Zone. Complete 50 Push-ups or 100 Squats to unlock the System and restore vital signs.',
+    title: 'PENALTY QUEST: SURVIVE THE CENTIPEDES (เอาชีวิตรอดในโซนลงโทษ)',
+    description: 'ค่า HP ลดลงเหลือ 0 คุณถูกเทเลพอร์ตเข้าสู่ Penalty Zone ต้องวิดพื้น 25 ครั้ง และสควอท 25 ครั้ง เพื่อปลดล็อกระบบและฟื้นฟูพลังชีวิต',
     type: 'PENALTY',
     difficulty: 'ELITE',
     target: 50,
@@ -385,72 +388,94 @@ export function createPenaltyZoneQuest(): Quest {
     deadline: 'IMMOBILIZED',
     status: 'IN_PROGRESS',
     createdAt: new Date().toISOString(),
-    isPenalty: true
+    isPenalty: true,
+    steps: [
+      { id: 'pen-step-1', name: 'วิดพื้นฉุกเฉิน (Survival Push-ups)', targetReps: 25, sets: 1, completed: false },
+      { id: 'pen-step-2', name: 'สควอทเร่งด่วน (Emergency Squats)', targetReps: 25, sets: 1, completed: false }
+    ]
   };
 }
 
 // Fallback Quests when Gemini API is unavailable or offline
 export const FALLBACK_DAILY_QUESTS: Omit<Quest, 'id' | 'createdAt' | 'status'>[] = [
   {
-    title: 'Squat Protocol',
-    description: 'Perform 20 controlled squats with full depth.',
+    title: 'Squat Protocol (โพรโทคอลสควอท)',
+    description: 'ปฏิบัติท่าสควอท 20 ครั้งด้วยฟอร์มที่ถูกต้องและลงลึกสม่ำเสมอ',
     type: 'STRENGTH',
     difficulty: 'EASY',
     target: 20,
     unit: 'reps',
     xpReward: 50,
     statRewards: { VIT: 1, STR: 1 },
-    deadline: '21:00'
+    deadline: '21:00',
+    steps: [
+      { id: 'step-1', name: 'สควอทบอดี้เวท (Bodyweight Squats)', targetReps: 10, sets: 2, completed: false },
+      { id: 'step-2', name: 'ยืดเหยียดสะโพก (Hip Opener Stretch)', targetSeconds: 60, sets: 1, completed: false }
+    ]
   },
   {
-    title: 'Push Protocol',
-    description: 'Complete 20 standard push-ups maintaining strict plank alignment.',
+    title: 'Push Protocol (โพรโทคอลวิดพื้น)',
+    description: 'ปฏิบัติท่าวิดพื้นมาตรฐาน 20 ครั้ง รักษาแนวลำตัวให้ตรงเหมือนแผ่นไม้',
     type: 'STRENGTH',
     difficulty: 'NORMAL',
     target: 20,
     unit: 'reps',
     xpReward: 60,
     statRewards: { STR: 1 },
-    deadline: '21:00'
+    deadline: '21:00',
+    steps: [
+      { id: 'step-1', name: 'วิดพื้นมาตรฐาน (Standard Push-ups)', targetReps: 10, sets: 2, completed: false },
+      { id: 'step-2', name: 'แพลงก์แขนตึง (High Plank)', targetSeconds: 30, sets: 1, completed: false }
+    ]
   },
   {
-    title: 'Endurance Stasis',
-    description: 'Hold a strict isometric plank for 60 seconds.',
+    title: 'Endurance Stasis (ความนิ่งแห่งความอดทน)',
+    description: 'เกร็งกล้ามเนื้อแกนกลางลำตัวในท่าแพลงก์ต่อเนื่องเป็นเวลา 60 วินาที',
     type: 'VITALITY',
     difficulty: 'EASY',
     target: 60,
     unit: 'seconds',
     xpReward: 50,
     statRewards: { VIT: 1 },
-    deadline: '21:00'
+    deadline: '21:00',
+    steps: [
+      { id: 'step-1', name: 'แพลงก์บนข้อศอก (Forearm Plank)', targetSeconds: 30, sets: 2, completed: false }
+    ]
   },
   {
-    title: 'Agility Cadence',
-    description: 'Execute 50 jumping jacks at rapid aerobic cadence.',
+    title: 'Agility Cadence (จังหวะความคล่องตัว)',
+    description: 'กระโดดตบ 50 ครั้งด้วยจังหวะแอโรบิกที่กระฉับกระเฉง',
     type: 'AGILITY',
     difficulty: 'NORMAL',
     target: 50,
     unit: 'reps',
     xpReward: 55,
     statRewards: { AGI: 1 },
-    deadline: '21:00'
+    deadline: '21:00',
+    steps: [
+      { id: 'step-1', name: 'กระโดดตบ (Jumping Jacks)', targetReps: 25, sets: 2, completed: false }
+    ]
   },
   {
-    title: 'Discipline Hydration & Focus',
-    description: 'Drink 500ml water and complete 5 minutes of focused breathing.',
+    title: 'Discipline Hydration & Focus (วินัยน้ำดื่มและสมาธิ)',
+    description: 'ดื่มน้ำสะอาด 500 มล. และฝึกควบคุมลมหายใจเข้าลึกออกยาว 5 นาที',
     type: 'DISCIPLINE',
     difficulty: 'EASY',
     target: 5,
     unit: 'minutes',
     xpReward: 40,
     statRewards: { INT: 1 },
-    deadline: '21:00'
+    deadline: '21:00',
+    steps: [
+      { id: 'step-1', name: 'ดื่มน้ำสะอาด 500 มล.', targetReps: 1, sets: 1, completed: false },
+      { id: 'step-2', name: 'ฝึกกำหนดลมหายใจเข้า-ออกลึกๆ', targetSeconds: 300, sets: 1, completed: false }
+    ]
   }
 ];
 
 export const PENALTY_QUEST_TEMPLATE: Omit<Quest, 'id' | 'createdAt' | 'status'> = {
-  title: 'PENALTY: Recovery Stride',
-  description: 'Daily deadline elapsed. Execute a brisk 5-minute walk to re-establish neural connection.',
+  title: 'PENALTY: Recovery Stride (เดินฟื้นฟู)',
+  description: 'หมดเวลาปฏิบัติเควสประจำวัน เดินเร็วต่อเนื่อง 5 นาทีเพื่อเชื่อมโยงระบบประสาทและสลายบทลงโทษ',
   type: 'PENALTY',
   difficulty: 'EASY',
   target: 5,
@@ -458,5 +483,8 @@ export const PENALTY_QUEST_TEMPLATE: Omit<Quest, 'id' | 'createdAt' | 'status'> 
   xpReward: 20,
   statRewards: { VIT: 1 },
   deadline: '23:59',
-  isPenalty: true
+  isPenalty: true,
+  steps: [
+    { id: 'pen-stride-1', name: 'เดินเร็วต่อเนื่องเพื่อฟื้นฟูระบบ', targetSeconds: 300, sets: 1, completed: false }
+  ]
 };

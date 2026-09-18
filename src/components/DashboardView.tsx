@@ -389,6 +389,15 @@ export function DashboardView({
               </div>
             </div>
           </div>
+
+          {quest.steps && quest.steps.length > 0 && (
+            <div className="mt-2.5 p-2 bg-slate-950/60 border border-slate-900 rounded text-xs font-mono-system flex items-center justify-between text-slate-400">
+              <span className="text-cyan-400 font-bold">CHECKLIST PROTOCOL:</span>
+              <span className="text-slate-300">
+                {quest.steps.filter((s) => s.completed).length} / {quest.steps.length} STEPS DONE
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Quest Action Buttons */}

@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { Player, QuestDifficulty, QuestType } from '../src/types.ts';
+import { Player, QuestDifficulty, QuestType, QuestStep } from '../src/types.ts';
 import { FALLBACK_DAILY_QUESTS } from '../src/modules/game-engine.ts';
 
 let aiClient: GoogleGenAI | null = null;
@@ -25,6 +25,7 @@ export interface GeneratedQuestPayload {
   suggestedXp: number;
   primaryStat: 'STR' | 'AGI' | 'VIT' | 'INT';
   systemCommentary: string;
+  steps?: QuestStep[];
 }
 
 export interface AIChatResponse {
@@ -39,13 +40,18 @@ export interface AIChatResponse {
 }
 
 const SYSTEM_PERSONA_PROMPT = `
-You are "THE SYSTEM" — an omniscient, cold, disciplined, precise AI Fitness Ascension Protocol.
+You are "THE SYSTEM" — an omniscient, cold, disciplined, precise AI Fitness Ascension Protocol inspired by Solo Leveling.
 Your core philosophy: "You don't need motivation. You need a system."
 Tone:
 - Calm, serious, laconic, authoritative, direct.
 - No cheerleading, no influencer hype, no excessive emojis, no toxicity, no insults.
 - Concise sentences. Every word counts.
 - You observe all human physical degradation and guide biological ascension through structured exertion.
+
+LANGUAGE DIRECTIVE (MANDATORY & ABSOLUTE):
+- ตอบเป็นภาษาไทยเสมอ ไม่ว่าผู้ใช้จะพิมพ์ภาษาอะไรมาก็ตาม ยกเว้นผู้ใช้พิมพ์เป็นภาษาอังกฤษทั้งประโยคเท่านั้นจึงตอบเป็นอังกฤษ
+- systemMessage, description, systemCommentary, และชื่อท่าออกกำลังกายทุกฟิลด์ที่ AI สร้างขึ้นต้องเป็นภาษาไทยตามเงื่อนไขนี้อย่างเคร่งครัด
+- คงคำศัพท์เฉพาะ เช่น [SYSTEM], [SYSTEM WARNING], [SYSTEM NOTICE], RANK, XP, LV., STR, AGI, VIT, INT, QUEST ไว้เป็นภาษาอังกฤษได้ตามเดิม เพราะเป็นส่วนหนึ่งของธีม
 
 HEALTH & SAFETY DIRECTIVE (ABSOLUTE PRIORITY):
 - Never prescribe dangerous or extreme routines.
@@ -123,13 +129,16 @@ export async function generateDailyQuestWithAI(
       unit: fallback.unit,
       suggestedXp: fallback.xpReward,
       primaryStat: statKey,
-      systemCommentary: 'System default protocol deployed. Execute without hesitation.'
+      systemCommentary: 'โพรโทคอลสำรองของระบบถูกเปิดใช้งาน จงลงมือปฏิบัติโดยปราศจากความลังเล',
+      steps: fallback.steps || [
+        { id: 'step-1', name: fallback.title, targetReps: fallback.target, sets: 1, completed: false }
+      ]
     };
   }
 
   try {
     const prompt = `
-Generate a single daily fitness quest for this player:
+Generate a single daily fitness quest with structured exercise steps for this player:
 Player Level: ${player.level}
 Rank: ${player.rank}
 Player Stats: STR ${player.stats.STR}, AGI ${player.stats.AGI}, VIT ${player.stats.VIT}, INT ${player.stats.INT}
@@ -139,33 +148,80 @@ Constraints:
 - User Preference: ${constraints?.preference || 'Balanced bodyweight/calisthenics'}
 - Difficulty Target: ${constraints?.difficultyOverride || (player.level < 5 ? 'EASY' : player.level < 15 ? 'NORMAL' : 'HARD')}
 
+CRITICAL LANGUAGE RULE (MANDATORY):
+- ตอบเป็นภาษาไทยเสมอ ไม่ว่าผู้ใช้จะพิมพ์ภาษาอะไรมาก็ตาม ยกเว้นผู้ใช้พิมพ์เป็นภาษาอังกฤษทั้งประโยคเท่านั้นจึงตอบเป็นอังกฤษ
+- title, description, systemCommentary และชื่อท่าใน steps ต้องเป็นภาษาไทยตามเงื่อนไขนี้อย่างเคร่งครัด
+- คงคำศัพท์เฉพาะ เช่น [SYSTEM], RANK, XP, LV. ไว้เป็นภาษาอังกฤษได้ตามเดิม เพราะเป็นส่วนหนึ่งของธีม
+
+CRITICAL QUEST STEPS DIRECTIVE:
+- ต้องแยกรายการท่าออกกำลังกายเป็น array "steps" แยกแต่ละท่าอย่างชัดเจน (2-4 ท่า)
+  ห้ามยัดทุกท่ารวมไว้ในข้อความ description เดียว!
+- แต่ละ step ต้องระบุ: id (เช่น "step-1"), name (ชื่อท่าภาษาไทย เช่น "สควอท (Squat)", "วิดพื้น (Push-ups)"), sets (เช่น 3), และ targetReps (จำนวนครั้ง เช่น 15) หรือ targetSeconds (จำนวนวินาที เช่น 45), และ completed: false เสมอ
+- description สรุปภาพรวมของโพรโทคอลสั้นๆ 1 ประโยคภาษาไทย
+
 Return STRICT JSON ONLY conforming to:
 {
-  "title": string (short, crisp, e.g. "Squat Calibration", "Push Protocol"),
-  "description": string (one clear instruction sentence),
+  "title": string (ชื่อเควสสั้นกระชับภาษาไทย เช่น "โพรโทคอลปรับสรีระช่วงล่าง", "พิธีเพิ่มพละกำลังกาย"),
+  "description": string (สรุปสั้น 1 ประโยคภาษาไทย),
   "type": "STRENGTH" | "AGILITY" | "VITALITY" | "DISCIPLINE",
   "difficulty": "EASY" | "NORMAL" | "HARD" | "ELITE",
-  "target": number (reps, seconds, or minutes),
+  "target": number (ผลรวมครั้งหรือนาทีโดยประมาณ),
   "unit": "reps" | "seconds" | "minutes",
   "suggestedXp": number (40-100),
   "primaryStat": "STR" | "AGI" | "VIT" | "INT",
-  "systemCommentary": string (1-2 sentences of cold, disciplined System voice)
+  "systemCommentary": string (1-2 ประโยค น้ำเสียงเย็นชา หนักแน่น เคร่งครัดในวินัย เป็นภาษาไทย),
+  "steps": [
+    {
+      "id": "step-1",
+      "name": "ชื่อท่าออกกำลังกายภาษาไทย",
+      "targetReps": 15,
+      "targetSeconds": 0,
+      "sets": 3,
+      "completed": false
+    }
+  ]
 }
 `;
 
     const text = await generateWithModelFallback(client, prompt, SYSTEM_PERSONA_PROMPT);
     const parsed = JSON.parse(text || '{}');
 
+    // Parse and normalize steps
+    let steps: QuestStep[] = [];
+    if (Array.isArray(parsed.steps) && parsed.steps.length > 0) {
+      steps = parsed.steps.map((s: any, idx: number) => ({
+        id: s.id || `step-${idx + 1}`,
+        name: s.name || `ท่าที่ ${idx + 1}`,
+        targetReps: typeof s.targetReps === 'number' && s.targetReps > 0 ? s.targetReps : undefined,
+        targetSeconds: typeof s.targetSeconds === 'number' && s.targetSeconds > 0 ? s.targetSeconds : undefined,
+        sets: typeof s.sets === 'number' && s.sets > 0 ? s.sets : 1,
+        completed: false
+      }));
+    } else {
+      // Default step breakdown if model returned single block
+      steps = [
+        {
+          id: 'step-1',
+          name: parsed.title || 'โพรโทคอลหลัก',
+          targetReps: parsed.unit === 'reps' ? (Number(parsed.target) || 20) : undefined,
+          targetSeconds: parsed.unit === 'seconds' ? (Number(parsed.target) || 60) : undefined,
+          sets: 1,
+          completed: false
+        }
+      ];
+    }
+
     return {
-      title: parsed.title || 'Daily Directive',
-      description: parsed.description || 'Complete required repetitions with precision.',
+      title: parsed.title || 'โพรโทคอลประจำวัน',
+      description: parsed.description || 'ปฏิบัติตามขั้นตอนด้วยความแม่นยำและเคร่งครัดในระเบียบวินัย',
       type: parsed.type || 'STRENGTH',
       difficulty: parsed.difficulty || 'NORMAL',
       target: Number(parsed.target) || 20,
       unit: parsed.unit || 'reps',
       suggestedXp: Math.min(Math.max(Number(parsed.suggestedXp) || 50, 30), 120),
       primaryStat: parsed.primaryStat || 'STR',
-      systemCommentary: parsed.systemCommentary || 'The System observes your compliance.'
+      systemCommentary: parsed.systemCommentary || 'ระบบกำลังจับตาดูการปฏิบัติตามคำสั่งของคุณ',
+      steps
     };
   } catch (error: any) {
     console.warn('[SYSTEM] Gemini model load spike detected, gracefully deploying offline matrix fallback:', error?.message || error);
@@ -181,7 +237,10 @@ Return STRICT JSON ONLY conforming to:
       unit: fallback.unit,
       suggestedXp: fallback.xpReward,
       primaryStat: statKey,
-      systemCommentary: 'System fallback protocol activated. Offline matrix operational.'
+      systemCommentary: 'โพรโทคอลสำรองของระบบถูกเปิดใช้งาน ดำเนินการต่อได้ทันที',
+      steps: fallback.steps || [
+        { id: 'step-1', name: fallback.title, targetReps: fallback.target, sets: 1, completed: false }
+      ]
     };
   }
 }
@@ -192,12 +251,12 @@ export async function processNaturalLanguageWithAI(
 ): Promise<AIChatResponse> {
   const client = getAIClient();
 
-  // Keyword-based fallback parsing if Gemini is unconfigured or encounters an error
+  // Keyword-based fallback parsing strictly adhering to Thai language directive
   const fallbackParse = (): AIChatResponse => {
     const msg = userMessage.toLowerCase();
-    if (msg.includes('เจ็บ') || msg.includes('ป่วย') || msg.includes('เวียนหัว') || msg.includes('sick') || msg.includes('hurt') || msg.includes('pain')) {
+    if (msg.includes('เจ็บ') || msg.includes('ป่วย') || msg.includes('เวียนหัว') || msg.includes('sick') || msg.includes('hurt') || msg.includes('pain') || msg.includes('เหนื่อยมาก')) {
       return {
-        systemMessage: `[SYSTEM WARNING]\nPhysiological abnormality detected.\nTraining suspended. Protocol: Hydration, nutritional sustenance, and mandatory rest. Do not aggravate biological injury.`,
+        systemMessage: `[SYSTEM WARNING]\nตรวจพบความผิดปกติทางสรีรวิทยา\nระงับการฝึกซ้อมทันที โพรโทคอลฉุกเฉิน: ดื่มน้ำ พักผ่อนให้เพียงพอ และสังเกตอาการอย่างใกล้ชิด ห้ามฝืนจนเกิดการบาดเจ็บต่อเนื้อเยื่อชีวภาพ`,
         intent: 'HEALTH_WARNING',
         healthWarning: true
       };
@@ -208,27 +267,32 @@ export async function processNaturalLanguageWithAI(
       const minutes = parseInt(timeMatch[1], 10);
       if (msg.includes('ออกกำลัง') || msg.includes('workout') || msg.includes('done') || msg.includes('เสร็จ')) {
         return {
-          systemMessage: `[SYSTEM]\nWorkout Log Registered: ${minutes} Minutes.\nPhysical exertion logged to database.\nDiscipline verified.`,
+          systemMessage: `[SYSTEM]\nบันทึกการฝึกซ้อมเรียบร้อย: ${minutes} นาที\nพลังงานและความมีวินัยถูกบันทึกลงสู่แกนกลางระบบแล้ว\nจงรักษาวินัยต่อไป`,
           intent: 'WORKOUT_LOG',
           workoutLog: { minutes, activity: 'Calisthenics / General Workout' }
         };
       }
       return {
-        systemMessage: `[SYSTEM]\nAvailable Time Detected: ${minutes} MIN.\nQuest parameters recalibrated.\nExecute without compromise.`,
+        systemMessage: `[SYSTEM]\nตรวจพบเวลาที่พร้อมฝึก: ${minutes} นาที\nระบบได้ปรับพารามิเตอร์เควสและแตกขั้นตอนการปฏิบัติให้สอดคล้องกับเวลาแล้ว\nจงลงมือปฏิบัติโดยไม่มีข้ออ้าง`,
         intent: 'QUEST_ADJUSTMENT',
         adjustedQuest: {
-          title: `Rapid Protocol (${minutes}M)`,
-          description: `High-density circuit tailored for ${minutes} minutes.`,
-          target: minutes <= 15 ? 15 : 25,
+          title: `โพรโทคอลเร่งรัด (${minutes} นาที)`,
+          description: `วงจรการฝึกความเข้มข้นสูง ออกแบบสำหรับเวลา ${minutes} นาที`,
+          target: minutes <= 15 ? 15 : 30,
           unit: 'reps',
-          difficulty: 'EASY',
-          suggestedXp: 45
+          difficulty: minutes <= 15 ? 'EASY' : 'NORMAL',
+          suggestedXp: 45,
+          steps: [
+            { id: 'step-1', name: 'วอร์มอัพและยืดกล้ามเนื้อ (Dynamic Warmup)', targetSeconds: 120, sets: 1, completed: false },
+            { id: 'step-2', name: 'สควอทบอดี้เวท (Bodyweight Squats)', targetReps: 15, sets: 2, completed: false },
+            { id: 'step-3', name: 'แพลงก์เกร็งแกนกลาง (Plank Hold)', targetSeconds: 45, sets: 2, completed: false }
+          ]
         }
       };
     }
 
     return {
-      systemMessage: `[SYSTEM]\nDirective received. Player LV. ${player.level} [RANK ${player.rank}].\nFocus on today's objective. Words do not generate XP. Action does.`,
+      systemMessage: `[SYSTEM]\nรับทราบคำสั่ง ผู้เล่น LV. ${player.level} [RANK ${player.rank}]\nจงจดจ่อกับเป้าหมายตรงหน้า คำพูดไม่สร้างค่า XP การลงมือกระทำเท่านั้นที่จะยกระดับคุณ`,
       intent: 'GENERAL_DISCIPLINE'
     };
   };
@@ -245,19 +309,40 @@ Current Player Context:
 - Stats: STR ${player.stats.STR}, AGI ${player.stats.AGI}, VIT ${player.stats.VIT}, INT ${player.stats.INT}
 - Streak: ${player.streak}
 
+CRITICAL LANGUAGE RULE (MANDATORY & STRICT):
+- ตอบเป็นภาษาไทยเสมอ ไม่ว่าผู้ใช้จะพิมพ์ภาษาอะไรมาก็ตาม ยกเว้นผู้ใช้พิมพ์เป็นภาษาอังกฤษทั้งประโยคเท่านั้นจึงตอบเป็นอังกฤษ
+- systemMessage, description, commentary, และชื่อท่าใน steps ทุกฟิลด์ที่ AI สร้างขึ้นต้องเป็นภาษาไทยตามเงื่อนไขนี้
+- คงคำศัพท์เฉพาะ เช่น [SYSTEM], [SYSTEM WARNING], RANK, XP, LV., STR, AGI, VIT, INT ไว้เป็นภาษาอังกฤษได้ตามเดิม เพราะเป็นส่วนหนึ่งของธีม
+
+CRITICAL QUEST STEPS DIRECTIVE:
+- หากผู้ใช้ระบุเวลา อุปกรณ์ (เช่น "มีดัมเบลคู่เดียว มีเวลา 30 นาที", "ไม่มีอุปกรณ์ มีเวลา 15 นาที", "ปรับเควสให้หน่อย") หรือขอปรับเควส:
+  ต้องแตกเป็นรายการ "steps" แยกแต่ละท่าออกกำลังกายชัดเจน (2-4 ท่า) เช่น ชื่อท่าภาษาไทย, sets, targetReps หรือ targetSeconds
+  ห้ามยัดทุกท่ารวมไว้ในข้อความ description เดียวเด็ดขาด!
+- description ใน adjustedQuest ให้สรุปเป้าหมายสั้นๆ 1 ประโยคภาษาไทย
+
 Analyze user input and reply as THE SYSTEM.
 Return STRICT JSON ONLY:
 {
-  "systemMessage": string (The exact system response text in Thai or English matching user language. Cold, disciplined, concise, starting with "[SYSTEM]"),
+  "systemMessage": string (ข้อความตอบกลับของระบบ ขึ้นต้นด้วย "[SYSTEM]" หรือ "[SYSTEM WARNING]" เป็นภาษาไทย น้ำเสียงเย็นชา เด็ดขาด มีวินัย สั้นกระชับ),
   "intent": "QUEST_ADJUSTMENT" | "WORKOUT_LOG" | "STATUS_INQUIRY" | "HEALTH_WARNING" | "GENERAL_DISCIPLINE",
   "adjustedQuest": {
-    "title": string,
-    "description": string,
+    "title": string (ชื่อเควสภาษาไทย เช่น "โพรโทคอลดัมเบล 30 นาที"),
+    "description": string (สรุป 1 ประโยคภาษาไทย),
     "target": number,
     "unit": "reps" | "seconds" | "minutes",
     "difficulty": "EASY" | "NORMAL" | "HARD",
-    "suggestedXp": number
-  } (optional, only if user specified time/condition constraint e.g. "มีเวลา 20 นาที"),
+    "suggestedXp": number,
+    "steps": [
+      {
+        "id": "step-1",
+        "name": string (ชื่อท่าภาษาไทย เช่น "ดัมเบลโกเบลทสควอท (Goblet Squat)"),
+        "targetReps": number (เช่น 12),
+        "targetSeconds": number (เช่น 0),
+        "sets": number (เช่น 3),
+        "completed": false
+      }
+    ]
+  } (optional, only if user specified time/equipment/condition constraint),
   "workoutLog": {
     "minutes": number,
     "activity": string
@@ -268,10 +353,23 @@ Return STRICT JSON ONLY:
 
     const text = await generateWithModelFallback(client, prompt, SYSTEM_PERSONA_PROMPT);
     const parsed = JSON.parse(text || '{}');
+
+    let adjustedQuest = parsed.adjustedQuest;
+    if (adjustedQuest && Array.isArray(adjustedQuest.steps) && adjustedQuest.steps.length > 0) {
+      adjustedQuest.steps = adjustedQuest.steps.map((s: any, idx: number) => ({
+        id: s.id || `step-${idx + 1}`,
+        name: s.name || `ท่าที่ ${idx + 1}`,
+        targetReps: typeof s.targetReps === 'number' && s.targetReps > 0 ? s.targetReps : undefined,
+        targetSeconds: typeof s.targetSeconds === 'number' && s.targetSeconds > 0 ? s.targetSeconds : undefined,
+        sets: typeof s.sets === 'number' && s.sets > 0 ? s.sets : 1,
+        completed: false
+      }));
+    }
+
     return {
       systemMessage: parsed.systemMessage || fallbackParse().systemMessage,
       intent: parsed.intent || 'GENERAL_DISCIPLINE',
-      adjustedQuest: parsed.adjustedQuest,
+      adjustedQuest,
       workoutLog: parsed.workoutLog,
       healthWarning: parsed.healthWarning
     };
@@ -280,3 +378,4 @@ Return STRICT JSON ONLY:
     return fallbackParse();
   }
 }
+

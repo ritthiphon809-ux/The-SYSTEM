@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Quest, QuestDifficulty } from '../types.ts';
-import { Play, CheckCircle2, AlertTriangle, Sparkles, Clock, ShieldAlert, RotateCcw } from 'lucide-react';
+import { Play, CheckCircle2, Sparkles, RotateCcw, CheckSquare, Square, ListChecks, Dumbbell } from 'lucide-react';
 import { playUiClick, playWarningSound, triggerHaptic } from '../utils/audio.ts';
 
 interface QuestViewProps {
@@ -10,6 +10,7 @@ interface QuestViewProps {
   onSimulateExpire: () => void;
   onRegenerateQuest: (difficulty?: QuestDifficulty) => Promise<void>;
   isGenerating: boolean;
+  onToggleStep?: (stepId: string) => void;
 }
 
 export function QuestView({
@@ -18,7 +19,8 @@ export function QuestView({
   onOpenCompleteModal,
   onSimulateExpire,
   onRegenerateQuest,
-  isGenerating
+  isGenerating,
+  onToggleStep
 }: QuestViewProps) {
   const [selectedDifficulty, setSelectedDifficulty] = useState<QuestDifficulty>(quest.difficulty);
 
@@ -27,6 +29,12 @@ export function QuestView({
     playUiClick();
     onRegenerateQuest(diff);
   };
+
+  const hasSteps = Array.isArray(quest.steps) && quest.steps.length > 0;
+  const completedStepsCount = hasSteps ? quest.steps!.filter((s) => s.completed).length : 0;
+  const totalStepsCount = hasSteps ? quest.steps!.length : 0;
+  const allStepsCompleted = hasSteps && completedStepsCount === totalStepsCount;
+  const progressPercent = hasSteps && totalStepsCount > 0 ? Math.round((completedStepsCount / totalStepsCount) * 100) : 0;
 
   return (
     <div className="space-y-6 pb-12">
@@ -59,18 +67,132 @@ export function QuestView({
           </div>
         </div>
 
-        {/* Quest Title and Giant Target Metric */}
+        {/* Quest Title & Description */}
         <div className="my-4">
           <h2 className="text-2xl sm:text-3xl font-black text-white font-sans uppercase tracking-wide">
             {quest.title}
           </h2>
-          <div className="text-4xl sm:text-5xl font-black text-cyan-300 font-mono-system my-2 tracking-tight">
-            {quest.target} <span className="text-xl text-slate-400 uppercase">{quest.unit}</span>
-          </div>
           <p className="text-slate-300 text-sm sm:text-base leading-relaxed mt-2 font-sans max-w-2xl">
             {quest.description}
           </p>
         </div>
+
+        {/* STEP-BY-STEP CHECKLIST or BACKWARD COMPATIBLE TARGET BLOCK */}
+        {hasSteps ? (
+          <div className="my-6 space-y-3">
+            <div className="flex items-center justify-between font-mono-system text-xs">
+              <div className="flex items-center gap-2 text-cyan-400 font-bold tracking-wider">
+                <ListChecks className="w-4 h-4" />
+                <span>EXERCISE CHECKLIST // PROTOCOL STEPS</span>
+              </div>
+              <div className="text-slate-400">
+                <span className={allStepsCompleted ? 'text-emerald-400 font-bold' : 'text-cyan-300 font-bold'}>
+                  {completedStepsCount}
+                </span>
+                <span> / {totalStepsCount} COMPLETED</span>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
+              <div
+                className={`h-full transition-all duration-500 ${
+                  allStepsCompleted
+                    ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]'
+                    : 'bg-gradient-to-r from-cyan-600 to-cyan-400 shadow-[0_0_10px_rgba(56,189,248,0.6)]'
+                }`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            {/* Step Items List */}
+            <div className="space-y-2.5 pt-1">
+              {quest.steps!.map((step, index) => {
+                const isDone = Boolean(step.completed);
+                return (
+                  <div
+                    key={step.id || `step-${index}`}
+                    onClick={() => {
+                      if (onToggleStep) {
+                        onToggleStep(step.id);
+                      }
+                    }}
+                    className={`p-3.5 rounded-sm border transition-all cursor-pointer flex items-start sm:items-center justify-between gap-3 select-none ${
+                      isDone
+                        ? 'bg-emerald-950/20 border-emerald-500/40 hover:bg-emerald-950/30'
+                        : 'bg-slate-950/80 border-slate-800/90 hover:border-cyan-500/60 hover:bg-slate-900/60'
+                    }`}
+                  >
+                    <div className="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                      <button
+                        type="button"
+                        aria-label={isDone ? 'Mark uncompleted' : 'Mark completed'}
+                        className="mt-0.5 sm:mt-0 flex-shrink-0 text-cyan-400 hover:text-cyan-300 transition-transform active:scale-95"
+                      >
+                        {isDone ? (
+                          <CheckSquare className="w-5 h-5 text-emerald-400 fill-emerald-950/50" />
+                        ) : (
+                          <Square className="w-5 h-5 text-slate-500 hover:text-cyan-400" />
+                        )}
+                      </button>
+
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className={`text-sm font-sans font-medium tracking-wide transition-all ${
+                            isDone ? 'line-through text-slate-500' : 'text-slate-100 font-semibold'
+                          }`}
+                        >
+                          {step.name}
+                        </div>
+
+                        {/* Badges for Sets, Reps, Seconds */}
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5 font-mono-system text-[11px]">
+                          {step.sets && step.sets > 1 && (
+                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                              {step.sets} เซ็ต
+                            </span>
+                          )}
+                          {step.targetReps && step.targetReps > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 font-bold">
+                              {step.targetReps} ครั้ง
+                            </span>
+                          )}
+                          {step.targetSeconds && step.targetSeconds > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-amber-300 font-bold">
+                              {step.targetSeconds} วินาที
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex-shrink-0 font-mono-system text-[11px]">
+                      {isDone ? (
+                        <span className="px-2 py-1 rounded bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold">
+                          [DONE]
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-500">
+                          [PENDING]
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          /* Backward compatibility: Classic single-target view for quests without steps */
+          <div className="my-6 p-4 bg-slate-950/80 border border-cyan-950 rounded-sm">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-mono-system">
+              TARGET REQUIREMENT
+            </div>
+            <div className="text-4xl sm:text-5xl font-black text-cyan-300 font-mono-system my-1 tracking-tight">
+              {quest.target} <span className="text-xl text-slate-400 uppercase">{quest.unit}</span>
+            </div>
+          </div>
+        )}
 
         {/* Spec Parameters Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-6 font-mono-system text-xs">
@@ -122,10 +244,16 @@ export function QuestView({
                 triggerHaptic('medium');
                 onOpenCompleteModal();
               }}
-              className="w-full py-3.5 px-4 rounded-sm bg-cyan-500 hover:bg-cyan-400 border border-cyan-200 text-slate-950 font-mono-system text-sm uppercase font-extrabold tracking-widest flex items-center justify-center gap-2 transition-all shadow-[0_0_25px_rgba(56,189,248,0.4)]"
+              className={`w-full py-3.5 px-4 rounded-sm border font-mono-system text-sm uppercase font-extrabold tracking-widest flex items-center justify-center gap-2 transition-all ${
+                allStepsCompleted
+                  ? 'bg-emerald-500 hover:bg-emerald-400 border-emerald-200 text-slate-950 shadow-[0_0_25px_rgba(52,211,153,0.5)]'
+                  : 'bg-cyan-500 hover:bg-cyan-400 border border-cyan-200 text-slate-950 shadow-[0_0_25px_rgba(56,189,248,0.4)]'
+              }`}
             >
               <CheckCircle2 className="w-5 h-5 stroke-[3]" />
-              <span>CONFIRM COMPLETION</span>
+              <span>
+                {allStepsCompleted ? 'ALL STEPS COMPLETED — CLAIM REWARD' : 'CONFIRM COMPLETION (COMPLETE ALL)'}
+              </span>
             </button>
           )}
 
@@ -147,7 +275,7 @@ export function QuestView({
         </div>
 
         <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-          Request the System AI brain to adapt physical parameters to your current energy and recovery profile.
+          สั่งการ AI ในการแปลงความต้องการ เช่น เวลาที่มีหรืออุปกรณ์ที่มี (เช่น "มีดัมเบลคู่เดียว มีเวลา 30 นาที") เป็นรายการท่าแบบเป็นขั้นตอน
         </p>
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -180,7 +308,7 @@ export function QuestView({
         <div className="pt-4 border-t border-slate-900 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-400">
             <span className="text-rose-400 font-mono-system font-bold">[PENALTY TEST]: </span>
-            Simulate 21:00 deadline expiration to verify failure protocol.
+            จำลองสถานการณ์หมดเวลา 21:00 น. เพื่อทดสอบโหมดบทลงโทษ (Penalty Zone)
           </div>
           <button
             onClick={() => {

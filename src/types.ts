@@ -41,6 +41,15 @@ export type QuestStatus = 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED' 
 
 export type QuestType = 'STRENGTH' | 'AGILITY' | 'VITALITY' | 'DISCIPLINE' | 'PENALTY' | 'EMERGENCY';
 
+export interface QuestStep {
+  id: string;
+  name: string;
+  targetReps?: number;
+  targetSeconds?: number;
+  sets?: number;
+  completed: boolean;
+}
+
 export interface Quest {
   id: string;
   title: string;
@@ -57,6 +66,7 @@ export interface Quest {
   completedAt?: string;
   isPenalty?: boolean;
   isEmergency?: boolean;
+  steps?: QuestStep[];
 }
 
 export type SystemEventType =

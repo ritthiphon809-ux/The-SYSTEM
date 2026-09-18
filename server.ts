@@ -38,8 +38,8 @@ let lastPushDateReminder = '';
 let currentPlayer: Player = { ...DEMO_PLAYER_STATE };
 let currentQuest: Quest = {
   id: 'quest-today-1',
-  title: 'Squat Protocol',
-  description: 'Perform 20 controlled squats with full depth. Maintain lumbar neutrality.',
+  title: 'Squat Protocol (โพรโทคอลสควอท)',
+  description: 'ปฏิบัติท่าสควอท 20 ครั้งด้วยฟอร์มที่ถูกต้องและลงลึกสม่ำเสมอ รักษาแนวกระดูกสันหลังให้มั่นคง',
   type: 'STRENGTH',
   difficulty: 'EASY',
   target: 20,
@@ -48,7 +48,11 @@ let currentQuest: Quest = {
   statRewards: { VIT: 1, STR: 1 },
   deadline: '21:00',
   status: 'AVAILABLE',
-  createdAt: new Date().toISOString()
+  createdAt: new Date().toISOString(),
+  steps: [
+    { id: 'step-1', name: 'สควอทบอดี้เวท (Bodyweight Squats)', targetReps: 10, sets: 2, completed: false },
+    { id: 'step-2', name: 'ยืดเหยียดสะโพกและเอ็นร้อยหวาย (Hip Stretch)', targetSeconds: 60, sets: 1, completed: false }
+  ]
 };
 
 let eventLogs: SystemEvent[] = [
@@ -322,7 +326,8 @@ async function startServer() {
         statRewards: { [generated.primaryStat]: 1 },
         deadline: '21:00',
         status: 'AVAILABLE',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        steps: generated.steps
       };
 
       const newEvent: SystemEvent = {
@@ -373,6 +378,9 @@ async function startServer() {
 
     currentQuest.status = 'COMPLETED';
     currentQuest.completedAt = new Date().toISOString();
+    if (currentQuest.steps) {
+      currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
+    }
 
     const result = processQuestCompletion(currentPlayer, currentQuest);
     currentPlayer = result.player;
@@ -408,6 +416,26 @@ async function startServer() {
       systemMessage: result.levelUp
         ? `[SYSTEM]\nLEVEL UP\nLV. ${String(result.oldLevel).padStart(2, '0')} → LV. ${String(result.newLevel).padStart(2, '0')}\nYour body has become stronger.`
         : `[SYSTEM]\nQUEST COMPLETE.\n+${result.xpGained} XP.\nContinue.`
+    });
+  });
+
+  // 7b. Toggle Quest Step Checklist Item
+  app.post('/api/quest/step-toggle', (req, res) => {
+    const { stepId, completed } = req.body;
+    if (!currentQuest.steps || currentQuest.steps.length === 0) {
+      return res.status(400).json({ error: 'Current quest has no checklist steps' });
+    }
+    const step = currentQuest.steps.find((s) => s.id === stepId);
+    if (!step) {
+      return res.status(404).json({ error: 'Step not found' });
+    }
+    step.completed = typeof completed === 'boolean' ? completed : !step.completed;
+    const allCompleted = currentQuest.steps.every((s) => s.completed);
+
+    res.json({
+      success: true,
+      quest: currentQuest,
+      allCompleted
     });
   });
 
@@ -469,7 +497,8 @@ async function startServer() {
         statRewards: { STR: 1, VIT: 1 },
         deadline: '21:00',
         status: 'AVAILABLE',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        steps: aiResult.adjustedQuest.steps
       };
 
       eventLogs.unshift({
@@ -718,6 +747,9 @@ async function startServer() {
           if (currentQuest.status !== 'COMPLETED') {
             currentQuest.status = 'COMPLETED';
             currentQuest.completedAt = new Date().toISOString();
+            if (currentQuest.steps) {
+              currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
+            }
             const result = processQuestCompletion(currentPlayer, currentQuest);
             currentPlayer = result.player;
 
@@ -759,7 +791,8 @@ async function startServer() {
               statRewards: { STR: 1, VIT: 1 },
               deadline: '21:00',
               status: 'AVAILABLE',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              steps: aiResponse.adjustedQuest.steps
             };
             questFlexToAttach = createQuestFlexMessage(currentQuest, appUrl);
           }
@@ -778,6 +811,9 @@ async function startServer() {
           if (currentQuest.status !== 'COMPLETED') {
             currentQuest.status = 'COMPLETED';
             currentQuest.completedAt = new Date().toISOString();
+            if (currentQuest.steps) {
+              currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
+            }
             const result = processQuestCompletion(currentPlayer, currentQuest);
             currentPlayer = result.player;
 

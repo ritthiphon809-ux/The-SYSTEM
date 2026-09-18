@@ -14,7 +14,7 @@ import { PlayerStatusView } from './components/PlayerStatusView.tsx';
 import { HistoryView } from './components/HistoryView.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { ConfirmationModal, LevelUpModal, PenaltyZoneModal, EmergencyQuestModal } from './components/SystemEventModal.tsx';
-import { playQuestComplete, playLevelUpSound, playWarningSound, playSystemTingSound, playPenaltyAlertSound, triggerHaptic } from './utils/audio.ts';
+import { playQuestComplete, playLevelUpSound, playWarningSound, playSystemTingSound, playPenaltyAlertSound, playUiClick, triggerHaptic } from './utils/audio.ts';
 import { registerServiceWorker } from './utils/pwa.ts';
 
 export default function App() {
@@ -22,8 +22,8 @@ export default function App() {
   const [player, setPlayer] = useState<Player>(DEMO_PLAYER_STATE);
   const [quest, setQuest] = useState<Quest>({
     id: 'quest-today-1',
-    title: 'Squat Protocol',
-    description: 'Perform 20 controlled squats with full depth. Maintain lumbar neutrality.',
+    title: 'Squat Protocol (โพรโทคอลสควอท)',
+    description: 'ปฏิบัติท่าสควอท 20 ครั้งด้วยฟอร์มที่ถูกต้องและลงลึกสม่ำเสมอ รักษาแนวกระดูกสันหลังให้มั่นคง',
     type: 'STRENGTH',
     difficulty: 'EASY',
     target: 20,
@@ -32,7 +32,11 @@ export default function App() {
     statRewards: { VIT: 1, STR: 1 },
     deadline: '21:00',
     status: 'AVAILABLE',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    steps: [
+      { id: 'step-1', name: 'สควอทบอดี้เวท (Bodyweight Squats)', targetReps: 10, sets: 2, completed: false },
+      { id: 'step-2', name: 'ยืดเหยียดสะโพกและเอ็นร้อยหวาย (Hip Stretch)', targetSeconds: 60, sets: 1, completed: false }
+    ]
   });
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [workouts, setWorkouts] = useState<WorkoutLog[]>([]);
@@ -98,6 +102,45 @@ export default function App() {
       refreshData();
     } catch {
       setQuest((prev) => ({ ...prev, status: 'IN_PROGRESS' }));
+    }
+  };
+
+  // 1b. Toggle Quest Step Checklist Item
+  const handleToggleStep = async (stepId: string) => {
+    if (!quest.steps) return;
+    const nextSteps = quest.steps.map((s) =>
+      s.id === stepId ? { ...s, completed: !s.completed } : s
+    );
+    const allCompleted = nextSteps.length > 0 && nextSteps.every((s) => s.completed);
+
+    setQuest((prev) => ({
+      ...prev,
+      steps: nextSteps,
+      status: prev.status === 'AVAILABLE' ? 'IN_PROGRESS' : prev.status
+    }));
+
+    playUiClick();
+    triggerHaptic('light');
+
+    if (allCompleted && quest.status !== 'COMPLETED') {
+      setIsConfirmOpen(true);
+    }
+
+    try {
+      const res = await fetch('/api/quest/step-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepId })
+      });
+      const data = await res.json();
+      if (data.success && data.quest) {
+        setQuest((prev) => ({
+          ...data.quest,
+          status: prev.status === 'COMPLETED' ? 'COMPLETED' : data.quest.status
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to sync step toggle:', err);
     }
   };
 
@@ -354,6 +397,7 @@ export default function App() {
             onSimulateExpire={handleSimulateExpire}
             onRegenerateQuest={handleRegenerateQuest}
             isGenerating={isGenerating}
+            onToggleStep={handleToggleStep}
           />
         )}
 
