@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { Player, Quest, SystemEvent, WorkoutLog } from './src/types.ts';
+import { Player, Quest, SystemEvent, WorkoutLog, PendingReminder, Rank } from './src/types.ts';
 import {
   DEMO_PLAYER_STATE,
   FALLBACK_DAILY_QUESTS,
@@ -27,6 +27,8 @@ import {
   createStatusFlexMessage,
   createReminderFlexMessage,
   createBriefingFlexMessage,
+  createWeeklySummaryFlexMessage,
+  WeeklySummaryData,
   replyLineMessage,
   sendLinePushMessage
 } from './server/line-service.ts';
@@ -35,9 +37,52 @@ dotenv.config();
 
 // In-Memory State Store for V1 MVP (Synchronized with Game Engine)
 const connectedLineUserIds = new Set<string>();
+// In-Memory Pending Reminders (User Custom Scheduled Reminders: { id, userId, remindAt, message, sent })
+const pendingReminders: PendingReminder[] = [];
 let lastPushDateQuest = '';
 let lastPushDateReminder = '';
 let lastPushDateBriefing = '';
+// Feature 1: Escalating Reminders daily flags
+let lastPushDateHalfway = '';
+let lastPushDate3Hours = '';
+let lastPushDate30Min = '';
+// Feature 3: Post-deadline penalty daily flag
+let lastPushDatePenalty = '';
+// Feature 4: Sunday weekly summary daily flag & Rest Day week tracker
+let lastPushDateWeeklySummary = '';
+let lastRestDayUsedWeek = '';
+// Feature 2: Random Surveillance Check-in Tracker
+let surveillanceTarget = {
+  date: '',
+  hour: 0,
+  minute: 0,
+  executed: false
+};
+
+// Helper: Calculate remaining minutes until deadline in Thailand Time (UTC+7)
+function getRemainingMinutesToDeadline(deadlineStr: string, bangkokNow: Date): number {
+  let targetHours = 21;
+  let targetMinutes = 0;
+  if (deadlineStr && deadlineStr.includes(':')) {
+    const parts = deadlineStr.split(':');
+    targetHours = parseInt(parts[0], 10) || 21;
+    targetMinutes = parseInt(parts[1], 10) || 0;
+  }
+  const targetDate = new Date(bangkokNow);
+  targetDate.setHours(targetHours, targetMinutes, 0, 0);
+  const diffMs = targetDate.getTime() - bangkokNow.getTime();
+  return Math.round(diffMs / 60000);
+}
+
+// Helper: Calculate ISO Week string (e.g. "2026-W38") to enforce 1 rest day per week
+function getWeekIdentifier(date: Date): string {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${weekNo}`;
+}
 let currentPlayer: Player = { ...DEMO_PLAYER_STATE };
 let currentQuest: Quest = {
   id: 'quest-today-1',
@@ -95,6 +140,31 @@ let workoutLogs: WorkoutLog[] = [
     source: 'LINE'
   }
 ];
+
+function calculateWeeklySummaryData(todayStr: string): WeeklySummaryData {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const recentWorkouts = workoutLogs.filter((w) => new Date(w.date).getTime() >= sevenDaysAgo.getTime());
+  const recentEvents = eventLogs.filter((e) => new Date(e.timestamp).getTime() >= sevenDaysAgo.getTime());
+
+  const completedCount = recentWorkouts.length || (currentQuest.status === 'COMPLETED' ? 1 : 0);
+  const totalXpEarned =
+    recentWorkouts.reduce((sum, w) => sum + (w.xpEarned || 0), 0) +
+    recentEvents
+      .filter((e) => e.type === 'XP_GAINED')
+      .reduce((sum, e) => sum + (e.xpChange || 0), 0);
+  const missedCount = recentEvents.filter((e) => e.type === 'DEBUFF_APPLIED' || e.type === 'PENALTY_CREATED').length;
+  const totalMins =
+    recentWorkouts.reduce((sum, w) => sum + (w.durationMinutes || 0), 0) || currentPlayer.totalWorkoutMinutes;
+
+  return {
+    totalQuests: Math.max(completedCount, (currentPlayer.totalQuestCompleted % 7) || completedCount || 1),
+    totalXp: Math.max(totalXpEarned, 250),
+    currentStreak: currentPlayer.streak,
+    missedDeadlines: missedCount,
+    totalMinutes: totalMins,
+    periodLabel: `รอบสัปดาห์สิ้นสุด ${todayStr}`
+  };
+}
 
 async function startServer() {
   const app = express();
@@ -708,17 +778,57 @@ async function startServer() {
       });
     }
 
+    // If user scheduled a reminder via natural language (Requirement 1, 2, 3)
+    if (aiResult.reminderRequest && aiResult.reminderRequest.remindAt) {
+      const remindTime = new Date(aiResult.reminderRequest.remindAt);
+      if (!isNaN(remindTime.getTime())) {
+        const targetUserId = currentPlayer.lineUserId || Array.from(connectedLineUserIds)[0] || 'local-web-hunter';
+        const reminderId = `remind-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        pendingReminders.push({
+          id: reminderId,
+          userId: targetUserId,
+          remindAt: remindTime.toISOString(),
+          message: aiResult.reminderRequest.message || `[SYSTEM REMINDER] ถึงเวลาที่คุณกำหนดไว้แล้ว จงเริ่มการฝึกฝน`,
+          sent: false
+        });
+
+        const timeFormatted = remindTime.toLocaleTimeString('th-TH', {
+          timeZone: 'Asia/Bangkok',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-remind-reg`,
+          type: 'STATUS_SYNC',
+          title: 'Reminder Protocol Scheduled',
+          description: `Target alert set for ${timeFormatted} น.`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
     res.json({
       success: true,
       systemMessage: aiResult.systemMessage,
       intent: aiResult.intent,
       quest: currentQuest,
       player: currentPlayer,
-      healthWarning: aiResult.healthWarning
+      healthWarning: aiResult.healthWarning,
+      reminderRequest: aiResult.reminderRequest
     });
   });
 
-  // 10. History & Activity Timeline
+  // 10. Pending Reminders Query
+  app.get('/api/reminders', (_req, res) => {
+    res.json({
+      reminders: pendingReminders,
+      count: pendingReminders.length,
+      activeCount: pendingReminders.filter((r) => !r.sent).length
+    });
+  });
+
+  // 11. History & Activity Timeline
   app.get('/api/history', (_req, res) => {
     res.json({
       events: eventLogs,
@@ -1034,9 +1144,137 @@ async function startServer() {
             await replyLineMessage(replyToken, [compFlex]);
           }
         }
-        // 4. Fallback to Gemini AI natural language engine
+        // 5. Rest Day Protocol ("ขอพัก" / "rest day" - Feature 4)
+        else if (
+          lower === 'ขอพัก' ||
+          lower === 'rest day' ||
+          lower.includes('ขอพัก') ||
+          lower.includes('rest day')
+        ) {
+          const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+          const currentWeekId = getWeekIdentifier(bangkokNow);
+
+          if (lastRestDayUsedWeek === currentWeekId) {
+            const replyMsg = `[SYSTEM NOTICE: REQUEST DENIED]\nโควต้า Rest Day สัปดาห์นี้หมดแล้ว (อนุญาตเพียง 1 ครั้งต่อสัปดาห์)\nระบบปฏิเสธคำขอการพักผ่อน จงกลับไปทำภารกิจ '${currentQuest.title}' อย่าให้ความอ่อนแอเข้าควบคุม`;
+            if (replyToken) {
+              await replyLineMessage(replyToken, [{ type: 'text', text: replyMsg }]);
+            }
+          } else {
+            lastRestDayUsedWeek = currentWeekId;
+            currentQuest.status = 'RESTED';
+            eventLogs.unshift({
+              id: `evt-${Date.now()}-rest-day`,
+              type: 'REST_DAY_ACTIVATED',
+              title: '[REST DAY PROTOCOL ACTIVATED]',
+              description: 'System approved biological muscle recovery window (1/1 weekly quota). Penalty exemption applied.',
+              timestamp: new Date().toISOString()
+            });
+            const replyMsg = `[SYSTEM NOTICE: REST PROTOCOL APPROVED]\nอนุมัติสิทธิ์พักฟื้นกล้ามเนื้อ (Rest Day) ประจำสัปดาห์ (1/1 ครั้ง)\nสถานะเควสถูกปรับเป็น 'RESTED' จะไม่มีการลงโทษ Debuff หรือลด Rank ในค่ำคืนนี้ จงใช้เวลานี้ฟื้นฟูกล้ามเนื้อและเตรียมพร้อมสำหรับวันพรุ่งนี้`;
+            if (replyToken) {
+              await replyLineMessage(replyToken, [{ type: 'text', text: replyMsg }]);
+            }
+          }
+        }
+        // 6. Surveillance Check-in Responses ("ทำแล้ว", "กำลังทำ", "ยังไม่ทำ" - Feature 2)
+        else if (lower === 'ทำแล้ว' || lower === 'ทำเสร็จแล้ว') {
+          let replyText = `[SYSTEM VERIFIED]\nบันทึกข้อมูลแล้ว: สถานะภารกิจ '${currentQuest.title}' ได้รับการตรวจสอบ`;
+          if (currentQuest.status !== 'COMPLETED') {
+            currentQuest.status = 'COMPLETED';
+            currentQuest.completedAt = new Date().toISOString();
+            if (currentQuest.steps) {
+              currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
+            }
+            const result = processQuestCompletion(currentPlayer, currentQuest);
+            currentPlayer = result.player;
+
+            workoutLogs.unshift({
+              id: `wk-surv-${Date.now()}`,
+              title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
+              durationMinutes: 20,
+              xpEarned: currentQuest.xpReward,
+              statsEarned: currentQuest.statRewards,
+              date: new Date().toISOString(),
+              source: 'LINE'
+            });
+
+            for (const evt of result.systemEvents) {
+              eventLogs.unshift(evt);
+            }
+            replyText += `\n✓ ยืนยันการบรรลุเป้าหมาย! ได้รับ +${result.xpGained} XP`;
+            if (result.levelUp) replyText += `\n★ LEVEL UP! [LV. ${result.newLevel}]`;
+          } else {
+            replyText += `\nสถานะภารกิจสมบูรณ์แล้ว ร่างกายอยู่ในสภาวะพร้อมรับการเติบโต`;
+          }
+          if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: replyText }]);
+          }
+        } else if (lower === 'กำลังทำ' || lower.includes('กำลังทำ') || lower.includes('กำลังออกกำลัง')) {
+          const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+          const remainMins = getRemainingMinutesToDeadline(currentQuest.deadline, bangkokNow);
+          const hoursRem = Math.floor(Math.max(0, remainMins) / 60);
+          const minsRem = Math.max(0, remainMins) % 60;
+          const timeStr = hoursRem > 0 ? `${hoursRem} ชั่วโมง ${minsRem} นาที` : `${minsRem} นาที`;
+          const replyText = `[SYSTEM MONITORED]\nรับทราบ เร่งความเร็วและรักษาฟอร์มการเคลื่อนไหวให้ถูกต้อง\nเหลือเวลาอีกประมาณ ${timeStr} ก่อนที่บทลงโทษและเส้นตาย (${currentQuest.deadline} น.) จะเริ่มทำงาน`;
+          if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: replyText }]);
+          }
+        } else if (lower === 'ยังไม่ทำ' || lower.includes('ยังไม่ทำ') || lower.includes('ยังไม่ได้ทำ')) {
+          const replyText = `[SYSTEM WARNING]\nคำเตือน: ความเกียจคร้านคือบ่อเกิดของความล้มเหลว โทษทัณฑ์ Debuff 'Weakened' (XP ลด 50%) กำลังรอคุณอยู่หากไม่เริ่มต้นทันที จงขยับร่างกายเดี๋ยวนี้!`;
+          if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: replyText }]);
+          }
+        }
+        // 7. Weekly Evaluation Summary on demand ("สรุปสัปดาห์" / "weekly summary" - Feature 4)
+        else if (
+          lower === 'สรุปสัปดาห์' ||
+          lower === 'weekly' ||
+          lower === 'weekly summary' ||
+          lower.includes('สรุปผล') ||
+          lower.includes('รายงานสัปดาห์')
+        ) {
+          const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+          const todayStr = bangkokNow.toISOString().slice(0, 10);
+          const summaryData = calculateWeeklySummaryData(todayStr);
+          const weeklyFlex = createWeeklySummaryFlexMessage(summaryData, currentPlayer, appUrl);
+          if (replyToken) {
+            await replyLineMessage(replyToken, [weeklyFlex]);
+          }
+        }
+        // 8. Fallback to Gemini AI natural language engine
         else {
           const aiResponse = await processNaturalLanguageWithAI(text, currentPlayer);
+
+          // Handle Custom User-Scheduled Reminder (Requirement 1, 3, 5)
+          if (aiResponse.reminderRequest && aiResponse.reminderRequest.remindAt) {
+            const remindTime = new Date(aiResponse.reminderRequest.remindAt);
+            if (!isNaN(remindTime.getTime())) {
+              const lineUserId = event.source?.userId || userId || 'unknown-hunter';
+              const reminderId = `remind-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              pendingReminders.push({
+                id: reminderId,
+                userId: lineUserId,
+                remindAt: remindTime.toISOString(),
+                message: aiResponse.reminderRequest.message || `[SYSTEM REMINDER] ถึงเวลาที่คุณกำหนดไว้แล้ว จงเริ่มการฝึกฝน`,
+                sent: false
+              });
+
+              console.log(`[THE SYSTEM] Registered PendingReminder [${reminderId}] for LINE user ${lineUserId} at ${remindTime.toISOString()}`);
+
+              const timeFormatted = remindTime.toLocaleTimeString('th-TH', {
+                timeZone: 'Asia/Bangkok',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              eventLogs.unshift({
+                id: `evt-${Date.now()}-remind-reg`,
+                type: 'STATUS_SYNC',
+                title: 'Reminder Protocol Scheduled',
+                description: `Target alert set for ${timeFormatted} น. (Hunter: ${lineUserId.slice(0, 10)}...)`,
+                timestamp: new Date().toISOString()
+              });
+            }
+          }
 
           let questFlexToAttach = null;
           if (aiResponse.adjustedQuest && (aiResponse.intent === 'QUEST_ADJUSTMENT' || aiResponse.adjustedQuest.title)) {
@@ -1136,6 +1374,109 @@ async function startServer() {
       });
     }
 
+    if (action === 'GET_WEEKLY_SUMMARY') {
+      const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+      const todayStr = bangkokNow.toISOString().slice(0, 10);
+      const summaryData = calculateWeeklySummaryData(todayStr);
+      const flexMsg = createWeeklySummaryFlexMessage(summaryData, currentPlayer, appUrl);
+      return res.json({
+        type: 'flex',
+        flexMessage: flexMsg,
+        summary: summaryData,
+        systemText: `[WEEKLY SYSTEM DEBRIEF]\nภารกิจที่สำเร็จ: ${summaryData.totalQuests}\nEXP ที่ได้รับ: +${summaryData.totalXp} XP\nStreak: ${summaryData.currentStreak} วัน\nพลาด Deadline: ${summaryData.missedDeadlines} ครั้ง`
+      });
+    }
+
+    if (action === 'TRIGGER_SURVEILLANCE') {
+      return res.json({
+        type: 'text',
+        systemText: `[SYSTEM] ตรวจสอบสถานะฉับพลัน (Surveillance Protocol)\nผู้เล่น ${currentPlayer.displayName}: ระบบกำลังตรวจวัดอัตราการเผาผลาญและความคืบหน้าของ Daily Quest '${currentQuest.title}'\nจงรายงานสถานะความคืบหน้าในปัจจุบันทันที: [ทำแล้ว] [กำลังทำ] [ยังไม่ทำ]`,
+        quickReplies: ['ทำแล้ว', 'กำลังทำ', 'ยังไม่ทำ']
+      });
+    }
+
+    if (action === 'TRIGGER_PENALTY') {
+      currentQuest.status = 'EXPIRED';
+      currentPlayer.missedDeadlineStreak = (currentPlayer.missedDeadlineStreak || 0) + 1;
+      currentPlayer.activeDebuff = {
+        name: 'SYSTEM PENALTY: Weakened',
+        description: 'XP ที่ได้รับลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ',
+        appliedAt: new Date().toISOString(),
+        xpMultiplier: 0.5
+      };
+
+      const rankOrder: Rank[] = ['E', 'D', 'C', 'B', 'A', 'S'];
+      let demoted = false;
+      const oldRank = currentPlayer.rank;
+      if (currentPlayer.missedDeadlineStreak >= 3) {
+        const currentIdx = rankOrder.indexOf(currentPlayer.rank);
+        if (currentIdx > 0) {
+          currentPlayer.rank = rankOrder[currentIdx - 1];
+          demoted = true;
+        }
+        currentPlayer.missedDeadlineStreak = 0;
+      }
+
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-penalty-sim`,
+        type: 'DEBUFF_APPLIED',
+        title: '[SYSTEM PENALTY: WEAKENED DEBUFF]',
+        description: `Missed quest deadline for ${currentQuest.title}. Weakened debuff activated (XP ×0.5). Missed streak: ${currentPlayer.missedDeadlineStreak}/3.`,
+        timestamp: new Date().toISOString()
+      });
+
+      if (demoted) {
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-rank-down-sim`,
+          type: 'RANK_DOWN',
+          title: `[RANK DEMOTION: RANK ${oldRank} → ${currentPlayer.rank}]`,
+          description: `Disciplinary demotion: Missed quest deadline for 3 consecutive days. Rank downgraded.`,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      let penaltyNotice = `[SYSTEM PENALTY ENFORCED]\nคุณพลาด Deadline การปฏิบัติภารกิจ (${currentQuest.title})\nบทลงโทษถูกเปิดใช้งาน: ได้รับ Debuff 'Weakened' (XP ที่ได้รับจะลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ)`;
+      if (demoted) {
+        penaltyNotice += `\n\n🚨 [RANK DEMOTION]\nเนื่องจากคุณพลาดภารกิจติดต่อกันครบ 3 วัน ระบบได้ลดระดับของคุณลงจาก RANK ${oldRank} สู่ RANK ${currentPlayer.rank}`;
+      }
+
+      return res.json({
+        type: 'text',
+        systemText: penaltyNotice,
+        player: currentPlayer,
+        quest: currentQuest
+      });
+    }
+
+    if (action === 'TRIGGER_REST_DAY') {
+      const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+      const currentWeekId = getWeekIdentifier(bangkokNow);
+      if (lastRestDayUsedWeek === currentWeekId) {
+        return res.json({
+          type: 'text',
+          systemText: `[SYSTEM NOTICE: REQUEST DENIED]\nโควต้า Rest Day สัปดาห์นี้หมดแล้ว (อนุญาตเพียง 1 ครั้งต่อสัปดาห์)\nระบบปฏิเสธคำขอการพักผ่อน จงกลับไปทำภารกิจ '${currentQuest.title}' อย่าให้ความอ่อนแอเข้าควบคุม`,
+          player: currentPlayer,
+          quest: currentQuest
+        });
+      } else {
+        lastRestDayUsedWeek = currentWeekId;
+        currentQuest.status = 'RESTED';
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-rest-day-sim`,
+          type: 'REST_DAY_ACTIVATED',
+          title: '[REST DAY PROTOCOL ACTIVATED]',
+          description: 'System approved biological muscle recovery window (1/1 weekly quota). Penalty exemption applied.',
+          timestamp: new Date().toISOString()
+        });
+        return res.json({
+          type: 'text',
+          systemText: `[SYSTEM NOTICE: REST PROTOCOL APPROVED]\nอนุมัติสิทธิ์พักฟื้นกล้ามเนื้อ (Rest Day) ประจำสัปดาห์ (1/1 ครั้ง)\nสถานะเควสถูกปรับเป็น 'RESTED' จะไม่มีการลงโทษ Debuff หรือลด Rank ในค่ำคืนนี้ จงใช้เวลานี้ฟื้นฟูกล้ามเนื้อและเตรียมพร้อมสำหรับวันพรุ่งนี้`,
+          player: currentPlayer,
+          quest: currentQuest
+        });
+      }
+    }
+
     if (action === 'COMPLETE_VIA_LINE') {
       currentQuest.status = 'COMPLETED';
       const result = processQuestCompletion(currentPlayer, currentQuest);
@@ -1151,57 +1492,468 @@ async function startServer() {
       });
     }
 
+    const simMsgTrimmed = (message || '').trim();
+    const simMsgLower = simMsgTrimmed.toLowerCase();
+
+    // Check fast-path commands in simulated LINE
+    if (
+      simMsgLower === 'ขอพัก' ||
+      simMsgLower === 'rest day' ||
+      simMsgLower.includes('ขอพัก') ||
+      simMsgLower.includes('rest day')
+    ) {
+      const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+      const currentWeekId = getWeekIdentifier(bangkokNow);
+      if (lastRestDayUsedWeek === currentWeekId) {
+        return res.json({
+          type: 'text',
+          systemText: `[SYSTEM NOTICE: REQUEST DENIED]\nโควต้า Rest Day สัปดาห์นี้หมดแล้ว (อนุญาตเพียง 1 ครั้งต่อสัปดาห์)\nระบบปฏิเสธคำขอการพักผ่อน จงกลับไปทำภารกิจ '${currentQuest.title}' อย่าให้ความอ่อนแอเข้าควบคุม`,
+          player: currentPlayer,
+          quest: currentQuest
+        });
+      } else {
+        lastRestDayUsedWeek = currentWeekId;
+        currentQuest.status = 'RESTED';
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-rest-day-sim`,
+          type: 'REST_DAY_ACTIVATED',
+          title: '[REST DAY PROTOCOL ACTIVATED]',
+          description: 'System approved biological muscle recovery window (1/1 weekly quota). Penalty exemption applied.',
+          timestamp: new Date().toISOString()
+        });
+        return res.json({
+          type: 'text',
+          systemText: `[SYSTEM NOTICE: REST PROTOCOL APPROVED]\nอนุมัติสิทธิ์พักฟื้นกล้ามเนื้อ (Rest Day) ประจำสัปดาห์ (1/1 ครั้ง)\nสถานะเควสถูกปรับเป็น 'RESTED' จะไม่มีการลงโทษ Debuff หรือลด Rank ในค่ำคืนนี้ จงใช้เวลานี้ฟื้นฟูกล้ามเนื้อและเตรียมพร้อมสำหรับวันพรุ่งนี้`,
+          player: currentPlayer,
+          quest: currentQuest
+        });
+      }
+    }
+
+    if (simMsgLower === 'ทำแล้ว' || simMsgLower === 'ทำเสร็จแล้ว') {
+      let textRes = `[SYSTEM VERIFIED]\nบันทึกข้อมูลแล้ว: สถานะภารกิจ '${currentQuest.title}' ได้รับการตรวจสอบ`;
+      if (currentQuest.status !== 'COMPLETED') {
+        currentQuest.status = 'COMPLETED';
+        currentQuest.completedAt = new Date().toISOString();
+        if (currentQuest.steps) {
+          currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
+        }
+        const result = processQuestCompletion(currentPlayer, currentQuest);
+        currentPlayer = result.player;
+
+        workoutLogs.unshift({
+          id: `wk-sim-${Date.now()}`,
+          title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
+          durationMinutes: 20,
+          xpEarned: currentQuest.xpReward,
+          statsEarned: currentQuest.statRewards,
+          date: new Date().toISOString(),
+          source: 'LINE'
+        });
+
+        for (const evt of result.systemEvents) {
+          eventLogs.unshift(evt);
+        }
+        textRes += `\n✓ ยืนยันการบรรลุเป้าหมาย! ได้รับ +${result.xpGained} XP`;
+        if (result.levelUp) textRes += `\n★ LEVEL UP! [LV. ${result.newLevel}]`;
+      } else {
+        textRes += `\nสถานะภารกิจสมบูรณ์แล้ว ร่างกายอยู่ในสภาวะพร้อมรับการเติบโต`;
+      }
+      return res.json({
+        type: 'text',
+        systemText: textRes,
+        player: currentPlayer,
+        quest: currentQuest
+      });
+    }
+
+    if (simMsgLower === 'กำลังทำ' || simMsgLower.includes('กำลังทำ') || simMsgLower.includes('กำลังออกกำลัง')) {
+      const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+      const remainMins = getRemainingMinutesToDeadline(currentQuest.deadline, bangkokNow);
+      const hoursRem = Math.floor(Math.max(0, remainMins) / 60);
+      const minsRem = Math.max(0, remainMins) % 60;
+      const timeStr = hoursRem > 0 ? `${hoursRem} ชั่วโมง ${minsRem} นาที` : `${minsRem} นาที`;
+      return res.json({
+        type: 'text',
+        systemText: `[SYSTEM MONITORED]\nรับทราบ เร่งความเร็วและรักษาฟอร์มการเคลื่อนไหวให้ถูกต้อง\nเหลือเวลาอีกประมาณ ${timeStr} ก่อนที่บทลงโทษและเส้นตาย (${currentQuest.deadline} น.) จะเริ่มทำงาน`,
+        player: currentPlayer,
+        quest: currentQuest
+      });
+    }
+
+    if (simMsgLower === 'ยังไม่ทำ' || simMsgLower.includes('ยังไม่ทำ') || simMsgLower.includes('ยังไม่ได้ทำ')) {
+      return res.json({
+        type: 'text',
+        systemText: `[SYSTEM WARNING]\nคำเตือน: ความเกียจคร้านคือบ่อเกิดของความล้มเหลว โทษทัณฑ์ Debuff 'Weakened' (XP ลด 50%) กำลังรอคุณอยู่หากไม่เริ่มต้นทันที จงขยับร่างกายเดี๋ยวนี้!`,
+        player: currentPlayer,
+        quest: currentQuest
+      });
+    }
+
+    if (
+      simMsgLower === 'สรุปสัปดาห์' ||
+      simMsgLower === 'weekly' ||
+      simMsgLower === 'weekly summary' ||
+      simMsgLower.includes('สรุปผล') ||
+      simMsgLower.includes('รายงานสัปดาห์')
+    ) {
+      const bangkokNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+      const todayStr = bangkokNow.toISOString().slice(0, 10);
+      const summaryData = calculateWeeklySummaryData(todayStr);
+      const weeklyFlex = createWeeklySummaryFlexMessage(summaryData, currentPlayer, appUrl);
+      return res.json({
+        type: 'flex',
+        flexMessage: weeklyFlex,
+        summary: summaryData,
+        systemText: `[WEEKLY SYSTEM DEBRIEF]\nภารกิจที่สำเร็จ: ${summaryData.totalQuests}\nEXP ที่ได้รับ: +${summaryData.totalXp} XP\nStreak: ${summaryData.currentStreak} วัน`
+      });
+    }
+
     // Natural text chat through simulated LINE
     const aiResult = await processNaturalLanguageWithAI(message || '', currentPlayer);
+
+    if (aiResult.reminderRequest && aiResult.reminderRequest.remindAt) {
+      const remindTime = new Date(aiResult.reminderRequest.remindAt);
+      if (!isNaN(remindTime.getTime())) {
+        const simUserId = currentPlayer.lineUserId || 'simulated-line-hunter';
+        const reminderId = `remind-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        pendingReminders.push({
+          id: reminderId,
+          userId: simUserId,
+          remindAt: remindTime.toISOString(),
+          message: aiResult.reminderRequest.message || `[SYSTEM REMINDER] ถึงเวลาที่คุณกำหนดไว้แล้ว จงเริ่มการฝึกฝน`,
+          sent: false
+        });
+
+        const timeFormatted = remindTime.toLocaleTimeString('th-TH', {
+          timeZone: 'Asia/Bangkok',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-remind-sim`,
+          type: 'STATUS_SYNC',
+          title: 'Reminder Protocol Scheduled',
+          description: `Target alert set for ${timeFormatted} น. (LINE Simulator)`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
     res.json({
       type: 'text',
       systemText: aiResult.systemMessage,
       intent: aiResult.intent,
+      reminderRequest: aiResult.reminderRequest,
       quest: currentQuest,
       player: currentPlayer
     });
   });
 
   // -------------------------------------------------------------
-  // SCHEDULED DISPATCHER (07:00 Quest & 20:00 Reminder via LINE Push)
+  // SCHEDULED DISPATCHER (07:00 Quest, 20:00 Deadline & Custom Pending Reminders via LINE Push)
   // -------------------------------------------------------------
   setInterval(async () => {
-    if (!process.env.LINE_CHANNEL_ACCESS_TOKEN || connectedLineUserIds.size === 0) return;
-
     try {
       const now = new Date();
+      const nowTime = now.getTime();
+
+      // Check and dispatch user-scheduled PendingReminders (Requirement 4)
+      const dueReminders = pendingReminders.filter(
+        (r) => !r.sent && new Date(r.remindAt).getTime() <= nowTime
+      );
+
+      for (const reminder of dueReminders) {
+        reminder.sent = true;
+        console.log(`[THE SYSTEM] Dispatching scheduled reminder [${reminder.id}] to user ${reminder.userId}...`);
+
+        // Send LINE Push Message if token configured and not a local simulator recipient
+        if (
+          process.env.LINE_CHANNEL_ACCESS_TOKEN &&
+          reminder.userId &&
+          !reminder.userId.startsWith('local-') &&
+          !reminder.userId.startsWith('sim-')
+        ) {
+          try {
+            await sendLinePushMessage(reminder.userId, [
+              {
+                type: 'text',
+                text: reminder.message
+              }
+            ]);
+            console.log(`[THE SYSTEM] Successfully delivered push reminder to LINE user ${reminder.userId}`);
+          } catch (pushErr) {
+            console.error(`[THE SYSTEM] Failed to deliver push reminder to ${reminder.userId}:`, pushErr);
+          }
+        }
+
+        // Add event log so it shows up in system log and history timeline
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-remind-fired`,
+          type: 'STATUS_SYNC',
+          title: 'Scheduled Reminder Dispatched',
+          description: reminder.message.replace(/\[.*?\]\n?/, '').slice(0, 100),
+          timestamp: new Date().toISOString()
+        });
+      }
+
       // Thailand Standard Time UTC+7
       const bangkokTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
       const hours = bangkokTime.getHours();
       const minutes = bangkokTime.getMinutes();
       const todayStr = bangkokTime.toISOString().slice(0, 10);
       const appUrl = process.env.APP_URL || 'http://localhost:3000';
+      const hasLinePush = Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN && connectedLineUserIds.size > 0);
+
+      // Feature 2: Schedule Today's Surveillance Check-in once per day (10:00 - 18:59)
+      if (surveillanceTarget.date !== todayStr) {
+        surveillanceTarget = {
+          date: todayStr,
+          hour: 10 + Math.floor(Math.random() * 9),
+          minute: Math.floor(Math.random() * 60),
+          executed: false
+        };
+        console.log(`[THE SYSTEM] Surveillance check-in scheduled for ${surveillanceTarget.hour}:${surveillanceTarget.minute.toString().padStart(2, '0')} today`);
+      }
+
+      // Feature 2: Execute Random Surveillance Check-in
+      if (
+        hours === surveillanceTarget.hour &&
+        minutes >= surveillanceTarget.minute &&
+        !surveillanceTarget.executed
+      ) {
+        surveillanceTarget.executed = true;
+        if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'RESTED') {
+          console.log(`[THE SYSTEM] Executing Random Surveillance Check-in to ${connectedLineUserIds.size} hunters...`);
+          const surveillanceMsg = {
+            type: 'text',
+            text: `[SYSTEM] ตรวจสอบสถานะ: ปัจจุบันความคืบหน้าของ Daily Quest '${currentQuest.title}' อยู่ในระดับใด? รายงานทันที:`,
+            quickReply: {
+              items: [
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: 'ทำแล้ว',
+                    text: 'ทำแล้ว'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: 'กำลังทำ',
+                    text: 'กำลังทำ'
+                  }
+                },
+                {
+                  type: 'action',
+                  action: {
+                    type: 'message',
+                    label: 'ยังไม่ทำ',
+                    text: 'ยังไม่ทำ'
+                  }
+                }
+              ]
+            }
+          };
+
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [surveillanceMsg]);
+            }
+          }
+
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-surv`,
+            type: 'STATUS_SYNC',
+            title: '[SURVEILLANCE CHECK-IN DISPATCHED]',
+            description: 'Dispatched spontaneous metabolic surveillance check via LINE Quick Reply.',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // Feature 1: Escalating Reminders
+      const remainingMinutes = getRemainingMinutesToDeadline(currentQuest.deadline, bangkokTime);
+
+      if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'RESTED') {
+        // Checkpoint 1: 50% Time Remaining (~420 mins before 21:00 deadline, i.e. 14:00)
+        if (remainingMinutes <= 420 && remainingMinutes > 180 && lastPushDateHalfway !== todayStr) {
+          lastPushDateHalfway = todayStr;
+          console.log(`[THE SYSTEM] 50% Time Remaining Checkpoint Triggered for ${connectedLineUserIds.size} hunters`);
+          const halfwayMsg = {
+            type: 'text',
+            text: `[SYSTEM DIRECTIVE: 50% TIME ELAPSED]\nเวลาสำหรับภารกิจ '${currentQuest.title}' ผ่านไปแล้ว 50%\nระบบยังไม่พบการบันทึกความคืบหน้า อย่าปล่อยให้ความเฉื่อยชาเข้ามาขัดขวางการเติบโต จงจัดสรรเวลาและเริ่มปฏิบัติการ (เส้นตาย: ${currentQuest.deadline} น.)`
+          };
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [halfwayMsg]);
+            }
+          }
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-escalate-50`,
+            type: 'SYSTEM_WARNING',
+            title: '[ESCALATING REMINDER: 50% REMAINING]',
+            description: 'System triggered cold-tone halfway adherence notification.',
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        // Checkpoint 2: 3 Hours Before Deadline (remainingMinutes <= 180, i.e. 18:00)
+        if (remainingMinutes <= 180 && remainingMinutes > 30 && lastPushDate3Hours !== todayStr) {
+          lastPushDate3Hours = todayStr;
+          console.log(`[THE SYSTEM] 3 Hours Remaining Checkpoint Triggered for ${connectedLineUserIds.size} hunters`);
+          const threeHoursMsg = {
+            type: 'text',
+            text: `[SYSTEM URGENT: 3 HOURS BEFORE DEADLINE]\nเหลือเวลาอีกเพียง 3 ชั่วโมงก่อนเส้นตายภารกิจ '${currentQuest.title}' (${currentQuest.deadline} น.)\nระบบต้องการการยืนยันการปฏิบัติ จงเร่งฝีเท้าและเริ่มทำตามโพรโทคอลเดี๋ยวนี้`
+          };
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [threeHoursMsg]);
+            }
+          }
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-escalate-3h`,
+            type: 'SYSTEM_WARNING',
+            title: '[ESCALATING REMINDER: 3 HOURS REMAINING]',
+            description: 'System triggered urgent-tone 3-hour deadline notification.',
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        // Checkpoint 3: 30 Minutes Before Deadline (remainingMinutes <= 30 && > 0, i.e. 20:30)
+        if (remainingMinutes <= 30 && remainingMinutes > 0 && lastPushDate30Min !== todayStr) {
+          lastPushDate30Min = todayStr;
+          console.log(`[THE SYSTEM] 30 Minutes Remaining Checkpoint Triggered for ${connectedLineUserIds.size} hunters`);
+          const thirtyMinMsg = {
+            type: 'text',
+            text: `[SYSTEM CRITICAL: 30 MINUTES TO PENALTY]\nคำเตือนขั้นวิกฤต: เหลือเวลาอีกเพียง 30 นาที ภารกิจ '${currentQuest.title}' จะหมดอายุ!\nหากไม่สำเร็จภายใน ${currentQuest.deadline} น. ระบบจะบังคับใช้ Debuff 'Weakened' (XP ลด 50%) และบันทึกโทษทัณฑ์ทันที จงทำภารกิจให้เสร็จสิ้นเดี๋ยวนี้!`
+          };
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [thirtyMinMsg]);
+            }
+          }
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-escalate-30m`,
+            type: 'SYSTEM_WARNING',
+            title: '[ESCALATING REMINDER: 30 MINUTES REMAINING]',
+            description: 'System triggered severe penalty warning notification.',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // Feature 3: Post-Deadline Check & Debuff Enforcement
+      if (remainingMinutes <= 0 && lastPushDatePenalty !== todayStr) {
+        lastPushDatePenalty = todayStr;
+        if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'RESTED') {
+          console.log(`[THE SYSTEM] Deadline passed! Enforcing System Debuff & Penalty...`);
+          currentQuest.status = 'EXPIRED';
+          currentPlayer.missedDeadlineStreak = (currentPlayer.missedDeadlineStreak || 0) + 1;
+
+          currentPlayer.activeDebuff = {
+            name: 'SYSTEM PENALTY: Weakened',
+            description: 'XP ที่ได้รับลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ',
+            appliedAt: new Date().toISOString(),
+            xpMultiplier: 0.5
+          };
+
+          const rankOrder: Rank[] = ['E', 'D', 'C', 'B', 'A', 'S'];
+          let demoted = false;
+          const oldRank = currentPlayer.rank;
+          if (currentPlayer.missedDeadlineStreak >= 3) {
+            const currentIdx = rankOrder.indexOf(currentPlayer.rank);
+            if (currentIdx > 0) {
+              currentPlayer.rank = rankOrder[currentIdx - 1];
+              demoted = true;
+            }
+            currentPlayer.missedDeadlineStreak = 0;
+          }
+
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-penalty-applied`,
+            type: 'DEBUFF_APPLIED',
+            title: '[SYSTEM PENALTY: WEAKENED DEBUFF]',
+            description: `Missed quest deadline for ${currentQuest.title}. Weakened debuff activated (XP ×0.5). Missed streak: ${currentPlayer.missedDeadlineStreak}/3.`,
+            timestamp: new Date().toISOString()
+          });
+
+          if (demoted) {
+            eventLogs.unshift({
+              id: `evt-${Date.now()}-rank-down`,
+              type: 'RANK_DOWN',
+              title: `[RANK DEMOTION: RANK ${oldRank} → ${currentPlayer.rank}]`,
+              description: `Disciplinary demotion: Missed quest deadline for 3 consecutive days. Rank downgraded.`,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          let penaltyPushText = `[SYSTEM PENALTY ENFORCED]\nคุณพลาด Deadline การปฏิบัติภารกิจ (${currentQuest.title})\nบทลงโทษถูกเปิดใช้งาน: ได้รับ Debuff 'Weakened' (XP ที่ได้รับจะลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ)`;
+          if (demoted) {
+            penaltyPushText += `\n\n🚨 [RANK DEMOTION]\nเนื่องจากคุณพลาดภารกิจติดต่อกันครบ 3 วัน ระบบได้ลดระดับของคุณลงจาก RANK ${oldRank} สู่ RANK ${currentPlayer.rank}`;
+          }
+
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [{ type: 'text', text: penaltyPushText }]);
+            }
+          }
+        }
+      }
+
+      // Feature 4: Sunday 21:30 Weekly Evaluation Summary Dispatch
+      const isSunday = bangkokTime.getDay() === 0;
+      if (isSunday && hours === 21 && minutes === 30 && lastPushDateWeeklySummary !== todayStr) {
+        lastPushDateWeeklySummary = todayStr;
+        console.log(`[THE SYSTEM] Sunday 21:30 Auto-Pushing Weekly Summary to ${connectedLineUserIds.size} LINE hunters...`);
+        const weeklyData = calculateWeeklySummaryData(todayStr);
+        const flexSummary = createWeeklySummaryFlexMessage(weeklyData, currentPlayer, appUrl);
+        if (hasLinePush) {
+          for (const uid of connectedLineUserIds) {
+            await sendLinePushMessage(uid, [flexSummary]);
+          }
+        }
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-weekly-eval`,
+          type: 'STATUS_SYNC',
+          title: '[WEEKLY SYSTEM DEBRIEF DISPATCHED]',
+          description: `Dispatched comprehensive 7-day ascension debrief (${weeklyData.totalQuests} quests fulfilled, +${weeklyData.totalXp} XP).`,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       // 07:00 Morning Quest Dispatch
       if (hours === 7 && minutes === 0 && lastPushDateQuest !== todayStr) {
         lastPushDateQuest = todayStr;
-        console.log(`[THE SYSTEM] 07:00 Auto-Pushing Daily Quest to ${connectedLineUserIds.size} LINE hunters...`);
-        const flex = createQuestFlexMessage(currentQuest, appUrl);
-        for (const uid of connectedLineUserIds) {
-          await sendLinePushMessage(uid, [flex]);
+        if (hasLinePush) {
+          console.log(`[THE SYSTEM] 07:00 Auto-Pushing Daily Quest to ${connectedLineUserIds.size} LINE hunters...`);
+          const flex = createQuestFlexMessage(currentQuest, appUrl);
+          for (const uid of connectedLineUserIds) {
+            await sendLinePushMessage(uid, [flex]);
+          }
         }
       }
 
       // 08:00 Morning Health & Readiness Briefing Dispatch
       if (hours === 8 && minutes === 0 && lastPushDateBriefing !== todayStr) {
         lastPushDateBriefing = todayStr;
-        console.log(`[THE SYSTEM] 08:00 Auto-Pushing Morning Health Briefing to ${connectedLineUserIds.size} LINE hunters...`);
-        const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
-        const briefingFlex = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
-        for (const uid of connectedLineUserIds) {
-          await sendLinePushMessage(uid, [briefingFlex]);
+        if (hasLinePush) {
+          console.log(`[THE SYSTEM] 08:00 Auto-Pushing Morning Health Briefing to ${connectedLineUserIds.size} LINE hunters...`);
+          const briefing = await generateDailyHealthBriefing(currentPlayer, currentQuest);
+          const briefingFlex = createBriefingFlexMessage(briefing, currentPlayer, currentQuest, appUrl);
+          for (const uid of connectedLineUserIds) {
+            await sendLinePushMessage(uid, [briefingFlex]);
+          }
         }
       }
 
       // 20:00 Evening Deadline Reminder (if quest still incomplete)
       if (hours === 20 && minutes === 0 && lastPushDateReminder !== todayStr) {
         lastPushDateReminder = todayStr;
-        if (currentQuest.status !== 'COMPLETED') {
+        if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'RESTED' && hasLinePush) {
           console.log(`[THE SYSTEM] 20:00 Auto-Pushing Deadline Reminder to ${connectedLineUserIds.size} LINE hunters...`);
           const flex = createReminderFlexMessage(currentQuest, appUrl);
           for (const uid of connectedLineUserIds) {

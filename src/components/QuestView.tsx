@@ -61,6 +61,8 @@ export function QuestView({
                   ? 'bg-amber-950 border-amber-500/50 text-amber-400'
                   : quest.status === 'EXPIRED'
                   ? 'bg-rose-950 border-rose-500/50 text-rose-400'
+                  : quest.status === 'RESTED'
+                  ? 'bg-indigo-950 border-indigo-500/50 text-indigo-300'
                   : 'bg-cyan-950 border-cyan-500/50 text-cyan-400'
               }`}
             >
@@ -277,6 +279,12 @@ export function QuestView({
           {quest.status === 'COMPLETED' && (
             <div className="p-4 rounded-sm bg-emerald-950/30 border border-emerald-500/50 text-emerald-400 font-mono-system text-xs text-center font-bold">
               [SYSTEM] OBJECTIVE FULFILLED. XP AND ATTRIBUTES STORED IN DATABASE.
+            </div>
+          )}
+
+          {quest.status === 'RESTED' && (
+            <div className="p-4 rounded-sm bg-indigo-950/40 border border-indigo-500/50 text-indigo-300 font-mono-system text-xs text-center font-bold">
+              [SYSTEM: REST DAY PROTOCOL ACTIVE] วันนี้เป็นวันพักผ่อนประจำสัปดาห์ (Rest Day) ระบบงดเว้นบทลงโทษ Debuff และรักษา Streak ของคุณ
             </div>
           )}
         </div>

@@ -7,6 +7,13 @@ export interface PlayerStats {
   INT: number;
 }
 
+export interface ActiveDebuff {
+  name: string;
+  description: string;
+  appliedAt: string;
+  xpMultiplier: number;
+}
+
 export interface Player {
   id: string;
   displayName: string;
@@ -33,6 +40,9 @@ export interface Player {
   heartRate: number;
   caloriesBurned: number;
   isPenaltyZone: boolean;
+  // System Debuff & Penalty Tracking (Feature 3)
+  activeDebuff?: ActiveDebuff;
+  missedDeadlineStreak: number;
   // LINE Authentication & Onboarding
   lineUserId?: string;
   lineDisplayName?: string;
@@ -46,7 +56,7 @@ export interface Player {
 
 export type QuestDifficulty = 'EASY' | 'NORMAL' | 'HARD' | 'ELITE';
 
-export type QuestStatus = 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED' | 'CANCELLED';
+export type QuestStatus = 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED' | 'CANCELLED' | 'RESTED';
 
 export type QuestType = 'STRENGTH' | 'AGILITY' | 'VITALITY' | 'DISCIPLINE' | 'PENALTY' | 'EMERGENCY';
 
@@ -95,7 +105,11 @@ export type SystemEventType =
   | 'HP_RESTORED'
   | 'PENALTY_SURVIVED'
   | 'STAT_ALLOCATED'
-  | 'EMERGENCY_QUEST';
+  | 'EMERGENCY_QUEST'
+  | 'STATUS_SYNC'
+  | 'RANK_DOWN'
+  | 'DEBUFF_APPLIED'
+  | 'REST_DAY_ACTIVATED';
 
 export interface SystemEvent {
   id: string;
@@ -131,4 +145,12 @@ export interface LineFlexMessage {
   type: 'flex';
   altText: string;
   contents: Record<string, any>;
+}
+
+export interface PendingReminder {
+  id: string;
+  userId: string;
+  remindAt: string; // ISO datetime
+  message: string;
+  sent: boolean;
 }

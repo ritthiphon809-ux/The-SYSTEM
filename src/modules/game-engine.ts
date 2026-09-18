@@ -60,6 +60,7 @@ export const INITIAL_PLAYER_STATE: Player = {
   totalWorkoutMinutes: 0,
   createdAt: new Date().toISOString(),
   lastActiveAt: new Date().toISOString(),
+  missedDeadlineStreak: 0,
   isDemo: false
 };
 
@@ -96,6 +97,7 @@ export const DEMO_PLAYER_STATE: Player = {
   totalWorkoutMinutes: 280,
   createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
   lastActiveAt: new Date().toISOString(),
+  missedDeadlineStreak: 0,
   isDemo: true
 };
 
@@ -118,9 +120,13 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
   const oldLevel = player.level;
   const oldRank = player.rank;
 
+  // Feature 3: Active Debuff Check (weakened penalty multiplies XP reward, e.g. 0.5)
+  const debuffMult = player.activeDebuff ? player.activeDebuff.xpMultiplier : 1;
+  const baseReward = Math.round(quest.xpReward * debuffMult);
+
   // STR Mechanic: Increases EXP gained from strength workouts (+2.5% per STR point)
   const strBonusMult = quest.type === 'STRENGTH' ? 1 + (player.stats.STR * 0.025) : 1;
-  const xpGained = Math.round(quest.xpReward * strBonusMult);
+  const xpGained = Math.round(baseReward * strBonusMult);
   const statGained = quest.statRewards || {};
 
   let currentXp = player.xp + xpGained;
@@ -230,6 +236,16 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     });
   }
 
+  if (player.activeDebuff) {
+    events.push({
+      id: `event-${Date.now()}-debuff-cleansed`,
+      type: 'STATUS_SYNC',
+      title: `[PENALTY CLEANSED: ${player.activeDebuff.name}]`,
+      description: `Quest completed under weakened penalty state. Debuff cleansed. Normal 100% XP rate restored.`,
+      timestamp: now
+    });
+  }
+
   const updatedPlayer: Player = {
     ...player,
     level: currentLevel,
@@ -243,6 +259,8 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     maxStamina: newMaxStamina,
     statPoints: updatedStatPoints,
     isPenaltyZone: false,
+    activeDebuff: undefined,
+    missedDeadlineStreak: 0,
     streak: newStreak,
     totalQuestCompleted: player.totalQuestCompleted + 1,
     totalWorkoutMinutes: player.totalWorkoutMinutes + (quest.type === 'VITALITY' ? 25 : 15),

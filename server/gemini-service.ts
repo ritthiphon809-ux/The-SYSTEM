@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { Player, QuestDifficulty, QuestType, QuestStep } from '../src/types.ts';
+import { Player, Quest, QuestDifficulty, QuestType, QuestStep } from '../src/types.ts';
 import { FALLBACK_DAILY_QUESTS } from '../src/modules/game-engine.ts';
 
 let aiClient: GoogleGenAI | null = null;
@@ -28,15 +28,21 @@ export interface GeneratedQuestPayload {
   steps?: QuestStep[];
 }
 
+export interface ReminderRequest {
+  remindAt: string; // ISO datetime string
+  message: string;
+}
+
 export interface AIChatResponse {
   systemMessage: string;
-  intent: 'QUEST_ADJUSTMENT' | 'WORKOUT_LOG' | 'STATUS_INQUIRY' | 'HEALTH_WARNING' | 'GENERAL_DISCIPLINE';
+  intent: 'QUEST_ADJUSTMENT' | 'WORKOUT_LOG' | 'STATUS_INQUIRY' | 'HEALTH_WARNING' | 'GENERAL_DISCIPLINE' | 'SET_REMINDER';
   adjustedQuest?: Partial<GeneratedQuestPayload>;
   workoutLog?: {
     minutes: number;
     activity: string;
   };
   healthWarning?: boolean;
+  reminderRequest?: ReminderRequest;
 }
 
 const SYSTEM_PERSONA_PROMPT = `
@@ -247,13 +253,135 @@ Return STRICT JSON ONLY conforming to:
 
 export async function processNaturalLanguageWithAI(
   userMessage: string,
-  player: Player
+  player: Player,
+  options?: { currentTimeIso?: string }
 ): Promise<AIChatResponse> {
   const client = getAIClient();
+
+  const now = new Date();
+  const currentTimeIso = options?.currentTimeIso || now.toISOString();
+
+  // Formatted Bangkok local time (UTC+7)
+  const bangkokFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const parts = bangkokFormatter.formatToParts(now);
+  const partMap: Record<string, string> = {};
+  for (const p of parts) {
+    partMap[p.type] = p.value;
+  }
+  const bangkokDateStr = `${partMap.year}-${partMap.month}-${partMap.day}`;
+  const bangkokTimeStr = `${partMap.hour}:${partMap.minute}`;
+  const bangkokFullStr = `${bangkokDateStr} ${bangkokTimeStr}:${partMap.second || '00'} (Asia/Bangkok UTC+7)`;
 
   // Keyword-based fallback parsing strictly adhering to Thai language directive
   const fallbackParse = (): AIChatResponse => {
     const msg = userMessage.toLowerCase();
+
+    // 0. Check for Reminder intent (SET_REMINDER)
+    const isReminderKeyword = msg.includes('เตือน') || msg.includes('remind') || msg.includes('ปลุก') || msg.includes('แจ้งเตือน');
+    if (isReminderKeyword) {
+      // Relative minutes: "เตือนอีก 10 นาที", "เตือนใน 15 นาที", "อีก 30 นาทีเตือนด้วย"
+      const relativeMinMatch = msg.match(/(?:อีก|ในอีก|ใน)?\s*(\d+)\s*(?:นาที|min|minute)/i);
+      if (relativeMinMatch) {
+        const addMinutes = parseInt(relativeMinMatch[1], 10);
+        if (addMinutes > 0) {
+          const targetDate = new Date(Date.now() + addMinutes * 60 * 1000);
+          const targetIso = targetDate.toISOString();
+          const targetTimeFormatted = targetDate.toLocaleTimeString('th-TH', {
+            timeZone: 'Asia/Bangkok',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          return {
+            systemMessage: `[SYSTEM NOTICE]\nบันทึกเวลาแจ้งเตือนเรียบร้อย: อีก ${addMinutes} นาที (${targetTimeFormatted} น.)\nระบบจะส่งสัญญาณเตือนผ่าน LINE เมื่อถึงกำหนดเวลา จงเตรียมความพร้อม`,
+            intent: 'SET_REMINDER',
+            reminderRequest: {
+              remindAt: targetIso,
+              message: `[SYSTEM REMINDER]\nถึงเวลาที่กำหนดแล้ว: อีก ${addMinutes} นาทีผ่านไป\nจงเริ่มลงมือปฏิบัติตามคำสั่งของระบบ อย่าปล่อยให้ความเฉื่อยชาครอบงำ`
+            }
+          };
+        }
+      }
+
+      // Exact clock time: "เตือนตอน 15:46", "เตือน 15:46", "15.46", "7:00", "07:00"
+      const exactTimeMatch = msg.match(/(\d{1,2})[:.](\d{2})/);
+      if (exactTimeMatch) {
+        const h = parseInt(exactTimeMatch[1], 10);
+        const m = parseInt(exactTimeMatch[2], 10);
+        if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+          const currentBkkHour = parseInt(partMap.hour, 10);
+          const currentBkkMin = parseInt(partMap.minute, 10);
+          let targetDayOffset = 0;
+          if (msg.includes('พรุ่งนี้') || (h < currentBkkHour || (h === currentBkkHour && m <= currentBkkMin))) {
+            targetDayOffset = 1;
+          }
+          const targetDate = new Date(Date.now() + targetDayOffset * 86400000);
+          const partsT = bangkokFormatter.formatToParts(targetDate);
+          const pMap: Record<string, string> = {};
+          for (const p of partsT) pMap[p.type] = p.value;
+          const targetIso = new Date(`${pMap.year}-${pMap.month}-${pMap.day}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+07:00`).toISOString();
+          const displayTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+          return {
+            systemMessage: `[SYSTEM NOTICE]\nบันทึกเวลาแจ้งเตือนเรียบร้อย: ${displayTime} น.${targetDayOffset ? ' (วันพรุ่งนี้)' : ''}\nระบบจะส่งสัญญาณเตือนไปยังอุปกรณ์ของคุณเมื่อถึงเวลาที่กำหนด`,
+            intent: 'SET_REMINDER',
+            reminderRequest: {
+              remindAt: targetIso,
+              message: `[SYSTEM REMINDER]\nขณะนี้เวลา ${displayTime} น.\nระบบส่งสัญญาณเตือนตามคำสั่งที่คุณกำหนดไว้ จงเข้าสู่โหมดการฝึกทันที`
+            }
+          };
+        }
+      }
+
+      // Thai conversational clock terms: "7 โมง", "7 โมงเช้า", "1 ทุ่ม", "2 ทุ่ม", "บ่าย 2 โมง"
+      const thaiClockMatch = msg.match(/(\d{1,2})\s*(โมงเช้า|โมงเย็น|โมง|ทุ่ม)/);
+      if (thaiClockMatch) {
+        const num = parseInt(thaiClockMatch[1], 10);
+        const unit = thaiClockMatch[2];
+        let h = num;
+        if (unit === 'ทุ่ม') {
+          h = 18 + num; // 1 ทุ่ม = 19:00
+        } else if (unit === 'โมงเย็น' || msg.includes('บ่าย')) {
+          h = num <= 5 ? 12 + num : num;
+        } else if (unit === 'โมงเช้า' || msg.includes('เช้า')) {
+          h = num;
+        }
+        if (h >= 0 && h < 24) {
+          const currentBkkHour = parseInt(partMap.hour, 10);
+          const targetDayOffset = msg.includes('พรุ่งนี้') || h <= currentBkkHour ? 1 : 0;
+          const targetDate = new Date(Date.now() + targetDayOffset * 86400000);
+          const partsT = bangkokFormatter.formatToParts(targetDate);
+          const pMap: Record<string, string> = {};
+          for (const p of partsT) pMap[p.type] = p.value;
+          const targetIso = new Date(`${pMap.year}-${pMap.month}-${pMap.day}T${String(h).padStart(2, '0')}:00:00+07:00`).toISOString();
+          const displayTime = `${String(h).padStart(2, '0')}:00`;
+
+          return {
+            systemMessage: `[SYSTEM NOTICE]\nบันทึกเวลาแจ้งเตือนเรียบร้อย: ${displayTime} น.${targetDayOffset ? ' (วันพรุ่งนี้)' : ''}\nระบบจะส่งสัญญาณเตือนไปยังอุปกรณ์ของคุณเมื่อถึงเวลาที่กำหนด`,
+            intent: 'SET_REMINDER',
+            reminderRequest: {
+              remindAt: targetIso,
+              message: `[SYSTEM REMINDER]\nขณะนี้เวลา ${displayTime} น.\nระบบส่งสัญญาณเตือนตามคำสั่งที่คุณกำหนดไว้ จงเข้าสู่โหมดการฝึกทันที`
+            }
+          };
+        }
+      }
+
+      // Ambiguous / indeterminate time -> Reject explicitly per Requirement 5
+      return {
+        systemMessage: `[SYSTEM]\nคำสั่งตั้งเวลาเตือนไม่สมบูรณ์: ไม่พบเวลาเป้าหมายที่แน่นอน\nกรุณาระบุเวลาให้ชัดเจน เช่น "เตือนตอน 15:46" หรือ "เตือนอีก 10 นาที" ระบบไม่สามารถลงทะเบียนเวลาที่กำกวมได้`,
+        intent: 'SET_REMINDER'
+      };
+    }
+
     if (msg.includes('เจ็บ') || msg.includes('ป่วย') || msg.includes('เวียนหัว') || msg.includes('sick') || msg.includes('hurt') || msg.includes('pain') || msg.includes('เหนื่อยมาก')) {
       return {
         systemMessage: `[SYSTEM WARNING]\nตรวจพบความผิดปกติทางสรีรวิทยา\nระงับการฝึกซ้อมทันที โพรโทคอลฉุกเฉิน: ดื่มน้ำ พักผ่อนให้เพียงพอ และสังเกตอาการอย่างใกล้ชิด ห้ามฝืนจนเกิดการบาดเจ็บต่อเนื้อเยื่อชีวภาพ`,
@@ -308,26 +436,47 @@ Current Player Context:
 - Level: ${player.level}, Rank: ${player.rank}
 - Stats: STR ${player.stats.STR}, AGI ${player.stats.AGI}, VIT ${player.stats.VIT}, INT ${player.stats.INT}
 - Streak: ${player.streak}
+Time Reference:
+- System UTC ISO: ${currentTimeIso}
+- Asia/Bangkok (UTC+7) Local Time: ${bangkokFullStr} (เวลาประเทศไทยปัจจุบัน: วันที่ ${bangkokDateStr} เวลา ${bangkokTimeStr} น.)
 
 CRITICAL LANGUAGE RULE (MANDATORY & STRICT):
 - ตอบเป็นภาษาไทยเสมอ ไม่ว่าผู้ใช้จะพิมพ์ภาษาอะไรมาก็ตาม ยกเว้นผู้ใช้พิมพ์เป็นภาษาอังกฤษทั้งประโยคเท่านั้นจึงตอบเป็นอังกฤษ
 - systemMessage, description, commentary, และชื่อท่าใน steps ทุกฟิลด์ที่ AI สร้างขึ้นต้องเป็นภาษาไทยตามเงื่อนไขนี้
-- คงคำศัพท์เฉพาะ เช่น [SYSTEM], [SYSTEM WARNING], RANK, XP, LV., STR, AGI, VIT, INT ไว้เป็นภาษาอังกฤษได้ตามเดิม เพราะเป็นส่วนหนึ่งของธีม
+- คงคำศัพท์เฉพาะ เช่น [SYSTEM], [SYSTEM WARNING], [SYSTEM NOTICE], [SYSTEM REMINDER], RANK, XP, LV., STR, AGI, VIT, INT ไว้เป็นภาษาอังกฤษได้ตามเดิม เพราะเป็นส่วนหนึ่งของธีม
 
-CRITICAL QUEST STEPS DIRECTIVE:
-- หากผู้ใช้ระบุเวลา อุปกรณ์ (เช่น "มีดัมเบลคู่เดียว มีเวลา 30 นาที", "ไม่มีอุปกรณ์ มีเวลา 15 นาที", "ปรับเควสให้หน่อย") หรือขอปรับเควส:
-  ต้องแตกเป็นรายการ "steps" แยกแต่ละท่าออกกำลังกายชัดเจน (2-4 ท่า) เช่น ชื่อท่าภาษาไทย, sets, targetReps หรือ targetSeconds
-  ห้ามยัดทุกท่ารวมไว้ในข้อความ description เดียวเด็ดขาด!
-- description ใน adjustedQuest ให้สรุปเป้าหมายสั้นๆ 1 ประโยคภาษาไทย
+CRITICAL INTENT DIRECTIVES:
+1. INTENT "SET_REMINDER":
+   - หากผู้ใช้พิมพ์ขอให้เตือนตามเวลา เช่น:
+     "เตือนตอน 15:46", "เตือน 20:30", "เตือนพรุ่งนี้เช้า 7 โมง", "เตือนตอน 1 ทุ่ม", "เตือนอีก 10 นาที", "เตือนในอีกครึ่งชั่วโมง"
+     ให้ตั้งค่า "intent": "SET_REMINDER"
+   - คำนวณเวลาจริงของเป้าหมายให้แม่นยำ โดยอ้างอิงจากเวลาประเทศไทยปัจจุบัน (${bangkokFullStr})
+     แปลงเวลาเป้าหมายเป็นรูปแบบ ISO 8601 Datetime String ที่ถูกต้อง (เช่น "2026-09-18T15:46:00.000+07:00" หรือ ISO UTC)
+     หากเวลาที่ระบุผ่านไปแล้วในวันนี้ ให้ถือว่าเป็นเวลาของวันพรุ่งนี้
+   - ใส่ในฟิลด์ "reminderRequest": {
+       "remindAt": "<ISO_DATETIME_STRING>",
+       "message": "<ข้อความเตือนของระบบสไตล์ THE SYSTEM สั้น กระชับ ทรงพลัง เช่น '[SYSTEM REMINDER] ขณะนี้เวลา 15:46 น. ถึงเวลาปฏิบัติตามคำสั่งของระบบแล้ว จงลงมือฝึกทันที'>"
+     }
+   - ใน "systemMessage": ตอบรับคำสั่งสไตล์ THE SYSTEM เป็นภาษาไทยอย่างเฉียบขาด ระบุเวลาที่บันทึกไว้ชัดเจน (เช่น "[SYSTEM NOTICE]\nบันทึกเวลาแจ้งเตือนเรียบร้อย: 15:46 น.\nระบบจะส่งสัญญาณเตือนผ่าน LINE เมื่อถึงกำหนดเวลา จงเตรียมความพร้อม")
+   - กฎเหล็กความชัดเจน (MANDATORY - NO FALSE PROMISES):
+     หากผู้ใช้พิมพ์ขอเตือน แต่ไม่ระบุเวลา หรือเวลากำกวม ไม่ชัดเจน ไม่สามารถคำนวณชั่วโมง/นาทีที่แน่นอนได้ (เช่น "เตือนด้วยนะ", "เตือนหน่อย", "ช่วยเตือนทีหลัง", "เตือนบ่อยๆ"):
+     * ห้ามใส่ฟิลด์ "reminderRequest" เด็ดขาด (ให้ส่งเป็น null หรือละเว้นฟิลด์นี้)
+     * ใน "systemMessage" ให้ตอบปฏิเสธอย่างเด็ดขาดและสั่งให้ผู้ใช้ระบุเวลาที่แน่นอน เช่น "[SYSTEM]\nคำสั่งตั้งเวลาเตือนไม่สมบูรณ์: ไม่พบเวลาเป้าหมายที่แน่นอน\nกรุณาระบุเวลาให้ชัดเจน เช่น 'เตือนตอน 15:46' หรือ 'เตือนอีก 10 นาที' ระบบไม่สามารถลงทะเบียนเวลาที่กำกวมได้"
+     * ห้ามตอบรับปากว่าจะเตือนเด็ดขาดถ้าไม่มีเวลาที่แท้จริง!
+
+2. INTENT "QUEST_ADJUSTMENT":
+   - หากผู้ใช้ระบุเวลา อุปกรณ์ หรือขอปรับเควส:
+     ต้องแตกเป็นรายการ "steps" แยกแต่ละท่าออกกำลังกายชัดเจน (2-4 ท่า)
+     description สรุปเป้าหมายสั้นๆ 1 ประโยคภาษาไทย
 
 Analyze user input and reply as THE SYSTEM.
 Return STRICT JSON ONLY:
 {
-  "systemMessage": string (ข้อความตอบกลับของระบบ ขึ้นต้นด้วย "[SYSTEM]" หรือ "[SYSTEM WARNING]" เป็นภาษาไทย น้ำเสียงเย็นชา เด็ดขาด มีวินัย สั้นกระชับ),
-  "intent": "QUEST_ADJUSTMENT" | "WORKOUT_LOG" | "STATUS_INQUIRY" | "HEALTH_WARNING" | "GENERAL_DISCIPLINE",
+  "systemMessage": string (ข้อความตอบกลับของระบบ ขึ้นต้นด้วย "[SYSTEM]" หรือ "[SYSTEM NOTICE]" หรือ "[SYSTEM WARNING]" เป็นภาษาไทย น้ำเสียงเย็นชา เด็ดขาด มีวินัย สั้นกระชับ),
+  "intent": "QUEST_ADJUSTMENT" | "WORKOUT_LOG" | "STATUS_INQUIRY" | "HEALTH_WARNING" | "GENERAL_DISCIPLINE" | "SET_REMINDER",
   "adjustedQuest": {
-    "title": string (ชื่อเควสภาษาไทย เช่น "โพรโทคอลดัมเบล 30 นาที"),
-    "description": string (สรุป 1 ประโยคภาษาไทย),
+    "title": string,
+    "description": string,
     "target": number,
     "unit": "reps" | "seconds" | "minutes",
     "difficulty": "EASY" | "NORMAL" | "HARD",
@@ -335,19 +484,23 @@ Return STRICT JSON ONLY:
     "steps": [
       {
         "id": "step-1",
-        "name": string (ชื่อท่าภาษาไทย เช่น "ดัมเบลโกเบลทสควอท (Goblet Squat)"),
-        "targetReps": number (เช่น 12),
-        "targetSeconds": number (เช่น 0),
-        "sets": number (เช่น 3),
+        "name": string,
+        "targetReps": number,
+        "targetSeconds": number,
+        "sets": number,
         "completed": false
       }
     ]
-  } (optional, only if user specified time/equipment/condition constraint),
+  } (optional),
   "workoutLog": {
     "minutes": number,
     "activity": string
-  } (optional, only if user confirmed completing a workout session),
-  "healthWarning": boolean (true if user reported illness, pain, or dizziness)
+  } (optional),
+  "healthWarning": boolean,
+  "reminderRequest": {
+    "remindAt": string (ISO 8601 Datetime string),
+    "message": string
+  } (optional, ONLY when an exact valid time is determinable. Omit or null if ambiguous)
 }
 `;
 
@@ -366,12 +519,35 @@ Return STRICT JSON ONLY:
       }));
     }
 
+    // Validate reminderRequest
+    let reminderRequest = parsed.reminderRequest;
+    if (reminderRequest && reminderRequest.remindAt) {
+      const parsedDate = new Date(reminderRequest.remindAt);
+      if (isNaN(parsedDate.getTime())) {
+        reminderRequest = undefined;
+      } else {
+        reminderRequest.remindAt = parsedDate.toISOString();
+        if (!reminderRequest.message) {
+          reminderRequest.message = `[SYSTEM REMINDER] ถึงเวลาที่คุณกำหนดไว้แล้ว จงเริ่มการฝึกฝน`;
+        }
+      }
+    } else {
+      reminderRequest = undefined;
+    }
+
+    let systemMessage = parsed.systemMessage || fallbackParse().systemMessage;
+    // Rule 5: If user intended SET_REMINDER but no valid definite time was provided, enforce clarification
+    if (parsed.intent === 'SET_REMINDER' && !reminderRequest) {
+      systemMessage = `[SYSTEM]\nคำสั่งตั้งเวลาเตือนไม่สมบูรณ์: ไม่พบเวลาเป้าหมายที่แน่นอน\nกรุณาระบุเวลาให้ชัดเจน เช่น "เตือนตอน 15:46" หรือ "เตือนอีก 10 นาที" ระบบไม่สามารถลงทะเบียนเวลาที่กำกวมได้`;
+    }
+
     return {
-      systemMessage: parsed.systemMessage || fallbackParse().systemMessage,
+      systemMessage,
       intent: parsed.intent || 'GENERAL_DISCIPLINE',
       adjustedQuest,
       workoutLog: parsed.workoutLog,
-      healthWarning: parsed.healthWarning
+      healthWarning: parsed.healthWarning,
+      reminderRequest
     };
   } catch (err: any) {
     console.warn('[SYSTEM] Gemini model load spike in chat, utilizing high-reliability fallback:', err?.message || err);
@@ -392,20 +568,20 @@ export async function generateDailyHealthBriefing(
   quest: Quest
 ): Promise<HealthBriefingPayload> {
   const fallback: HealthBriefingPayload = {
-    greeting: `อรุณสวัสดิ์ ฮันเตอร์ ${player.name} (RANK ${player.rank})`,
+    greeting: `อรุณสวัสดิ์ ฮันเตอร์ ${player.displayName} (RANK ${player.rank})`,
     conditionAssessment: `อัตราชีพจรเสถียร พลังชีวิต ${player.hp}/${player.maxHp} HP สเตมินา ${player.stamina}/${player.maxStamina} MP ร่างกายพร้อมรับแรงต้านประจำวัน`,
     readinessScore: Math.min(98, Math.max(65, Math.round((player.hp / player.maxHp) * 50 + (player.stamina / player.maxStamina) * 50))),
     recommendation: `ระบบได้เตรียมโพรโทคอล "${quest.title}" ไว้แล้ว กำหนดเส้นตาย ${quest.deadline || '21:00'} น. จงเริ่มต้นเมื่อพร้อม`,
     focusArea: player.hp < 40 ? 'RECOVERY' : (quest.type as any) || 'STRENGTH'
   };
 
-  const client = getGeminiClient();
+  const client = getAIClient();
   if (!client) return fallback;
 
   try {
     const prompt = `
 Generate a Morning Health & Readiness Briefing for Hunter:
-- Name: ${player.name}
+- Name: ${player.displayName}
 - Level: Lv. ${player.level} (Rank ${player.rank})
 - HP: ${player.hp} / ${player.maxHp}
 - Stamina: ${player.stamina} / ${player.maxStamina}

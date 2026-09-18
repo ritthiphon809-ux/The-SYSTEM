@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Player, Quest, LineFlexMessage } from '../types.ts';
+import { Player, Quest, LineFlexMessage, PendingReminder } from '../types.ts';
 import {
   MessageSquare,
   Smartphone,
@@ -17,7 +17,8 @@ import {
   Check,
   Users,
   Radio,
-  Activity
+  Activity,
+  Clock
 } from 'lucide-react';
 import { playUiClick, playWarningSound, playLevelUpSound } from '../utils/audio.ts';
 import { promptPwaInstall, canInstallPwa } from '../utils/pwa.ts';
@@ -60,6 +61,19 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
     }
   ]);
   const [installAvailable, setInstallAvailable] = useState(canInstallPwa());
+  const [reminders, setReminders] = useState<PendingReminder[]>([]);
+
+  const fetchReminders = async () => {
+    try {
+      const res = await fetch('/api/reminders');
+      if (res.ok) {
+        const data = await res.json();
+        setReminders(data.reminders || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch reminders:', e);
+    }
+  };
 
   const fetchLineStatus = async () => {
     try {
@@ -75,6 +89,9 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
 
   useEffect(() => {
     fetchLineStatus();
+    fetchReminders();
+    const interval = setInterval(fetchReminders, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleCopyWebhook = () => {
@@ -174,6 +191,9 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
     } finally {
       setIsSimulating(false);
       setLineSimInput('');
+      fetchReminders();
+      // Synchronize player & quest state with parent component
+      onCompleteQuest();
     }
   };
 
@@ -450,6 +470,42 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>SIMULATE COMPLETE VIA LINE</span>
           </button>
+
+          <button
+            onClick={() => triggerLineSimAction('TRIGGER_SURVEILLANCE')}
+            disabled={isSimulating}
+            className="px-3 py-1.5 rounded bg-slate-900 border border-purple-950 hover:border-purple-500 text-purple-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Radio className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
+            <span>SURVEILLANCE CHECK (สุ่มตรวจ)</span>
+          </button>
+
+          <button
+            onClick={() => triggerLineSimAction('TRIGGER_PENALTY')}
+            disabled={isSimulating}
+            className="px-3 py-1.5 rounded bg-slate-900 border border-rose-950 hover:border-rose-500 text-rose-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
+          >
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+            <span>ENFORCE DEBUFF PENALTY (ลงโทษ)</span>
+          </button>
+
+          <button
+            onClick={() => triggerLineSimAction('TRIGGER_REST_DAY')}
+            disabled={isSimulating}
+            className="px-3 py-1.5 rounded bg-slate-900 border border-indigo-950 hover:border-indigo-500 text-indigo-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+            <span>REQUEST REST DAY (ขอพัก)</span>
+          </button>
+
+          <button
+            onClick={() => triggerLineSimAction('GET_WEEKLY_SUMMARY')}
+            disabled={isSimulating}
+            className="px-3 py-1.5 rounded bg-slate-900 border border-cyan-950 hover:border-cyan-500 text-cyan-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Activity className="w-3.5 h-3.5 text-cyan-400" />
+            <span>21:30 WEEKLY SUMMARY (สรุปสัปดาห์)</span>
+          </button>
         </div>
 
         {/* Simulated Chat Feed */}
@@ -518,6 +574,153 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
             <Send className="w-3.5 h-3.5" />
             <span>SEND</span>
           </button>
+        </div>
+
+        {/* Quick Test Reminder Directives */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] font-mono-system">
+          <span className="text-slate-400 font-semibold flex items-center gap-1">
+            <Clock className="w-3 h-3 text-cyan-400" /> คำสั่งเตือน:
+          </span>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'เตือนอีก 10 นาที')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
+          >
+            "เตือนอีก 10 นาที"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'เตือนตอน 15:46')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
+          >
+            "เตือนตอน 15:46"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'เตือนตอน 1 ทุ่ม')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
+          >
+            "เตือนตอน 1 ทุ่ม"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'เตือนหน่อย')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-amber-900/60 text-amber-300 hover:bg-amber-950/80 hover:border-amber-400 transition-colors"
+            title="ทดสอบการปฏิเสธคำสั่งกำกวมที่ไม่มีเวลาแน่ชัด"
+          >
+            "เตือนหน่อย" (ทดสอบเวลากำกวม)
+          </button>
+        </div>
+
+        {/* Anime System & Surveillance Command Chips */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-mono-system">
+          <span className="text-slate-400 font-semibold flex items-center gap-1">
+            <Radio className="w-3 h-3 text-purple-400" /> คำสั่งระบบ / ตรวจสอบ:
+          </span>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'ทำแล้ว')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-emerald-800/60 text-emerald-300 hover:bg-emerald-950/80 hover:border-emerald-400 transition-colors"
+          >
+            "ทำแล้ว"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'กำลังทำ')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-sky-800/60 text-sky-300 hover:bg-sky-950/80 hover:border-sky-400 transition-colors"
+          >
+            "กำลังทำ"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'ยังไม่ทำ')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-rose-800/60 text-rose-300 hover:bg-rose-950/80 hover:border-rose-400 transition-colors"
+          >
+            "ยังไม่ทำ"
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'ขอพัก')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-indigo-800/60 text-indigo-300 hover:bg-indigo-950/80 hover:border-indigo-400 transition-colors"
+          >
+            "ขอพัก" (Rest Day)
+          </button>
+          <button
+            onClick={() => triggerLineSimAction('CHAT', 'สรุปสัปดาห์')}
+            disabled={isSimulating}
+            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
+          >
+            "สรุปสัปดาห์" (Weekly Evaluation)
+          </button>
+        </div>
+
+        {/* Pending Reminders Queue Dashboard */}
+        <div className="mt-4 pt-3 border-t border-slate-900">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-mono-system font-bold text-slate-300">
+              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+              <span>SCHEDULED REMINDERS QUEUE ({reminders.filter((r) => !r.sent).length} PENDING)</span>
+            </div>
+            <button
+              onClick={fetchReminders}
+              className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono-system flex items-center gap-1 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" /> REFRESH
+            </button>
+          </div>
+
+          {reminders.length === 0 ? (
+            <div className="text-[11px] font-mono-system text-slate-500 italic py-1">
+              ยังไม่มีการตั้งเตือนในคิว — พิมพ์คำสั่ง เช่น "เตือนอีก 10 นาที" หรือ "เตือนตอน 15:46" เพื่อให้ระบบลงทะเบียน
+            </div>
+          ) : (
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              {reminders.map((rem) => {
+                const remindDate = new Date(rem.remindAt);
+                const timeStr = remindDate.toLocaleTimeString('th-TH', {
+                  timeZone: 'Asia/Bangkok',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+                const dateStr = remindDate.toLocaleDateString('th-TH', {
+                  timeZone: 'Asia/Bangkok',
+                  day: 'numeric',
+                  month: 'short'
+                });
+                return (
+                  <div
+                    key={rem.id}
+                    className={`flex items-center justify-between text-xs font-mono-system p-2 rounded border transition-colors ${
+                      rem.sent
+                        ? 'bg-slate-950/50 border-slate-800 text-slate-500'
+                        : 'bg-cyan-950/30 border-cyan-500/40 text-cyan-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span
+                        className={`px-1.5 py-0.5 text-[9px] rounded font-bold ${
+                          rem.sent
+                            ? 'bg-slate-800 text-slate-400'
+                            : 'bg-cyan-900 text-cyan-300 border border-cyan-600'
+                        }`}
+                      >
+                        {rem.sent ? 'DISPATCHED' : 'SCHEDULED'}
+                      </span>
+                      <span className="font-semibold text-slate-200 shrink-0">
+                        {dateStr} {timeStr} น.
+                      </span>
+                      <span className="truncate text-slate-400 text-[11px]">
+                        {rem.message.replace(/\[.*?\]\n?/, '')}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 shrink-0 ml-2">
+                      Target: {rem.userId.slice(0, 10)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 

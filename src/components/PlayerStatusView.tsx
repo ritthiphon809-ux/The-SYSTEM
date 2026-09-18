@@ -218,6 +218,36 @@ export function PlayerStatusView({ player, onAllocateStat }: PlayerStatusViewPro
         </div>
       </section>
 
+      {/* ACTIVE DEBUFF WARNING (Penalty System - Feature 3) */}
+      {player.activeDebuff && (
+        <section className="bg-[#1e080b] border-2 border-rose-500 rounded-sm p-4 system-bracket shadow-[0_0_20px_rgba(244,63,94,0.3)]">
+          <div className="flex items-start gap-3 font-mono-system">
+            <AlertCircle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-rose-400 uppercase tracking-widest">
+                  [ ACTIVE SYSTEM DEBUFF ENFORCED ]
+                </span>
+                <span className="px-1.5 py-0.5 text-[9px] bg-rose-950/80 text-rose-300 border border-rose-600 rounded">
+                  XP ×{player.activeDebuff.xpMultiplier || 0.5}
+                </span>
+              </div>
+              <h4 className="text-sm font-bold text-rose-200 mt-1">
+                {player.activeDebuff.name}
+              </h4>
+              <p className="text-xs text-rose-300/90 mt-0.5">
+                {player.activeDebuff.description}
+              </p>
+              <div className="text-[11px] text-rose-400/80 mt-2 flex items-center gap-2">
+                <span>Missed Deadline Streak: {player.missedDeadlineStreak || 1}/3</span>
+                <span>•</span>
+                <span>หากพลาดติดต่อกัน 3 วันจะถูกลดระดับ RANK ทันที</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* STAT POINT ALLOCATION BANNER */}
       {player.statPoints > 0 ? (
         <section className="bg-[#0b162c] border-2 border-cyan-400 rounded-sm p-4 system-bracket shadow-[0_0_20px_rgba(56,189,248,0.3)]">

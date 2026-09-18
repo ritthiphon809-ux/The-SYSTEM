@@ -424,7 +424,38 @@ export function createStatusFlexMessage(player: Player, appUrl: string): LineFle
             contents: [
               { type: 'text', text: `🔥 STREAK: ${player.streak} DAYS`, color: '#f59e0b', size: 'xs', weight: 'bold' }
             ]
-          }
+          },
+          ...(player.activeDebuff
+            ? [
+                {
+                  type: 'box',
+                  layout: 'vertical',
+                  backgroundColor: '#450a0a',
+                  borderColor: '#ef4444',
+                  borderWidth: '1px',
+                  cornerRadius: '4px',
+                  paddingAll: '10px',
+                  margin: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: `⚠ ${player.activeDebuff.name}`,
+                      color: '#f87171',
+                      size: 'xs',
+                      weight: 'bold'
+                    },
+                    {
+                      type: 'text',
+                      text: `${player.activeDebuff.description} (XP ×${player.activeDebuff.xpMultiplier})`,
+                      color: '#fca5a5',
+                      size: 'xxs',
+                      wrap: true,
+                      margin: 'xs'
+                    }
+                  ]
+                }
+              ]
+            : [])
         ]
       },
       footer: {
@@ -812,4 +843,194 @@ export async function sendLinePushMessage(userId: string, messages: any[]): Prom
     console.error('[LINE] Failed to send LINE push message:', err);
     return false;
   }
+}
+
+export interface WeeklySummaryData {
+  totalQuests: number;
+  totalXp: number;
+  currentStreak: number;
+  missedDeadlines: number;
+  totalMinutes: number;
+  periodLabel: string;
+}
+
+// Generate LINE Weekly Evaluation Summary Flex Message (Sunday 21:30)
+export function createWeeklySummaryFlexMessage(
+  summary: WeeklySummaryData,
+  player: Player,
+  appUrl: string
+): LineFlexMessage {
+  const isHighPerformer = summary.totalQuests >= 5 && summary.missedDeadlines === 0;
+  const evaluationTone = isHighPerformer
+    ? 'วินัยอยู่ในระดับยอดเยี่ยม ร่างกายปรับตัวเข้ากับโพรโทคอลได้อย่างน่าพึงพอใจ จงรักษามาตรฐานนี้ไว้'
+    : summary.missedDeadlines > 0
+    ? `ตรวจพบการละเว้นภารกิจ ${summary.missedDeadlines} ครั้ง ความอ่อนแอจะนำไปสู่บทลงโทษ จงปรับปรุงวินัยในสัปดาห์ถัดไป`
+    : 'การฝึกฝนดำเนินไปอย่างต่อเนื่อง จงยกระดับขีดจำกัดของตนเองในสัปดาห์ข้างหน้า';
+
+  return {
+    type: 'flex',
+    altText: `[SYSTEM] WEEKLY EVALUATION: ${summary.totalQuests} เควสสำเร็จ | +${summary.totalXp} XP`,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#05070a',
+        paddingAll: '20px',
+        contents: [
+          {
+            type: 'text',
+            text: '[WEEKLY SYSTEM DEBRIEF]',
+            color: '#38bdf8',
+            size: 'xs',
+            weight: 'bold'
+          },
+          {
+            type: 'text',
+            text: 'รายงานสรุปผลประจำสัปดาห์',
+            color: '#ffffff',
+            size: 'lg',
+            weight: 'bold',
+            margin: 'xs'
+          },
+          {
+            type: 'text',
+            text: summary.periodLabel,
+            color: '#64748b',
+            size: 'xxs',
+            margin: 'xs'
+          }
+        ]
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#0a0f1d',
+        paddingAll: '20px',
+        spacing: 'md',
+        contents: [
+          {
+            type: 'box',
+            layout: 'horizontal',
+            contents: [
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'เควสที่สำเร็จ', color: '#64748b', size: 'xxs' },
+                  {
+                    type: 'text',
+                    text: `${summary.totalQuests} ภารกิจ`,
+                    color: '#34d399',
+                    size: 'lg',
+                    weight: 'bold'
+                  }
+                ]
+              },
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'EXP สะสมรวม', color: '#64748b', size: 'xxs' },
+                  {
+                    type: 'text',
+                    text: `+${summary.totalXp} XP`,
+                    color: '#38bdf8',
+                    size: 'lg',
+                    weight: 'bold'
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: 'box',
+            layout: 'horizontal',
+            margin: 'sm',
+            contents: [
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'STREAK ปัจจุบัน', color: '#64748b', size: 'xxs' },
+                  {
+                    type: 'text',
+                    text: `${summary.currentStreak} วัน`,
+                    color: '#f59e0b',
+                    size: 'md',
+                    weight: 'bold'
+                  }
+                ]
+              },
+              {
+                type: 'box',
+                layout: 'vertical',
+                flex: 1,
+                contents: [
+                  { type: 'text', text: 'พลาด DEADLINE', color: '#64748b', size: 'xxs' },
+                  {
+                    type: 'text',
+                    text: `${summary.missedDeadlines} ครั้ง`,
+                    color: summary.missedDeadlines > 0 ? '#ef4444' : '#94a3b8',
+                    size: 'md',
+                    weight: 'bold'
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: '#0f172a',
+            cornerRadius: '4px',
+            paddingAll: '12px',
+            margin: 'md',
+            borderColor: '#1e293b',
+            borderWidth: '1px',
+            contents: [
+              {
+                type: 'text',
+                text: 'SYSTEM ASSESSMENT',
+                color: '#38bdf8',
+                size: 'xxs',
+                weight: 'bold'
+              },
+              {
+                type: 'text',
+                text: evaluationTone,
+                color: '#cbd5e1',
+                size: 'xs',
+                wrap: true,
+                margin: 'xs'
+              }
+            ]
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#05070a',
+        paddingAll: '15px',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#0284c7',
+            height: 'sm',
+            action: {
+              type: 'uri',
+              label: 'VIEW SYSTEM LOGS',
+              uri: `${appUrl}/history`
+            }
+          }
+        ]
+      }
+    }
+  };
 }
