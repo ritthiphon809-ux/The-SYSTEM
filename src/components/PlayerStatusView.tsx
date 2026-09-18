@@ -82,8 +82,29 @@ export function PlayerStatusView({ player, onAllocateStat }: PlayerStatusViewPro
             <h2 className="text-xl sm:text-2xl font-black text-white font-mono-system tracking-wider uppercase">
               {player.displayName}
             </h2>
-            <div className="text-xs text-slate-400 font-mono-system mt-0.5">
-              REGISTERED: {new Date(player.createdAt).toLocaleDateString()}
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 font-mono-system mt-1">
+              <span>REGISTERED: {new Date(player.createdAt).toLocaleDateString()}</span>
+              {player.fitnessGoal && (
+                <span className="text-cyan-400 font-bold">
+                  GOAL: {player.fitnessGoal}
+                </span>
+              )}
+              {player.weightKg && (
+                <span className="text-slate-300">
+                  {player.weightKg} KG
+                </span>
+              )}
+              {player.heightCm && (
+                <span className="text-slate-300">
+                  {player.heightCm} CM
+                </span>
+              )}
+              {player.lineUserId && (
+                <span className="text-emerald-400 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  LINE LINKED
+                </span>
+              )}
             </div>
           </div>
 

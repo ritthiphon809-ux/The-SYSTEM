@@ -14,12 +14,21 @@ import { PlayerStatusView } from './components/PlayerStatusView.tsx';
 import { HistoryView } from './components/HistoryView.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { ConfirmationModal, LevelUpModal, PenaltyZoneModal, EmergencyQuestModal } from './components/SystemEventModal.tsx';
+import { HunterOnboardingModal } from './components/HunterOnboardingModal.tsx';
 import { playQuestComplete, playLevelUpSound, playWarningSound, playSystemTingSound, playPenaltyAlertSound, playUiClick, triggerHaptic } from './utils/audio.ts';
 import { registerServiceWorker } from './utils/pwa.ts';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
   const [player, setPlayer] = useState<Player>(DEMO_PLAYER_STATE);
+  const [lineOaBasicId, setLineOaBasicId] = useState<string>('');
+  const [lineLoginConfigured, setLineLoginConfigured] = useState<boolean>(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [initialLineAuth, setInitialLineAuth] = useState<{
+    userId: string;
+    displayName: string;
+    pictureUrl?: string;
+  } | undefined>(undefined);
   const [quest, setQuest] = useState<Quest>({
     id: 'quest-today-1',
     title: 'Squat Protocol (โพรโทคอลสควอท)',
@@ -68,10 +77,23 @@ export default function App() {
         fetch('/api/history').then((r) => r.json())
       ]);
 
+      if (playerRes.lineOaBasicId) {
+        setLineOaBasicId(playerRes.lineOaBasicId);
+      }
+      if (playerRes.lineLoginConfigured !== undefined) {
+        setLineLoginConfigured(playerRes.lineLoginConfigured);
+      }
+
       if (playerRes.player) {
         setPlayer(playerRes.player);
         if (playerRes.player.isEmergencyQuest) {
           setIsEmergencyOpen(true);
+        }
+
+        // Check if player has registered, or if first-time user
+        const hasRegisteredLocally = localStorage.getItem('the_system_registered') === '1';
+        if (!playerRes.player.isRegistered && !hasRegisteredLocally && !playerRes.player.isDemo) {
+          setIsOnboardingOpen(true);
         }
       }
       if (questRes.quest) setQuest(questRes.quest);
@@ -84,8 +106,58 @@ export default function App() {
 
   useEffect(() => {
     registerServiceWorker();
+
+    // Check for LINE OAuth Redirect Query Parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const lineAuthSuccess = urlParams.get('line_auth_success');
+    const lineUserId = urlParams.get('line_userId');
+    const lineName = urlParams.get('line_name');
+    const linePic = urlParams.get('line_pic');
+
+    if (lineAuthSuccess && lineUserId) {
+      setInitialLineAuth({
+        userId: lineUserId,
+        displayName: lineName || 'HUNTER',
+        pictureUrl: linePic || undefined
+      });
+      setIsOnboardingOpen(true);
+      // Clean up URL query parameters without reloading
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     refreshData();
   }, []);
+
+  // Handle Hunter Onboarding Completion
+  const handleCompleteOnboarding = async (profileData: {
+    displayName: string;
+    fitnessGoal: 'FAT_LOSS' | 'MUSCLE_GAIN' | 'ENDURANCE' | 'SOLO_LEVELING';
+    weightKg?: number;
+    heightCm?: number;
+    lineUserId?: string;
+    lineDisplayName?: string;
+    linePictureUrl?: string;
+  }) => {
+    try {
+      const res = await fetch('/api/player/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileData)
+      });
+      const data = await res.json();
+      if (data.player) {
+        setPlayer(data.player);
+      }
+      localStorage.setItem('the_system_registered', '1');
+      setIsOnboardingOpen(false);
+      refreshData();
+      playLevelUpSound();
+      triggerHaptic('success');
+    } catch (err) {
+      console.error('Failed to register player:', err);
+      setIsOnboardingOpen(false);
+    }
+  };
 
   // 1. Start Quest
   const handleStartQuest = async () => {
@@ -363,7 +435,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#05070a] text-slate-100 bg-grid-pattern relative selection:bg-cyan-500/20 selection:text-cyan-300">
       {/* Top Protocol Header */}
-      <SystemHeader player={player} onResetDemo={handleResetDemo} />
+      <SystemHeader
+        player={player}
+        onResetDemo={handleResetDemo}
+        onOpenHunterProfile={() => setIsOnboardingOpen(true)}
+      />
 
       {/* Navigation Tabs Bar */}
       <Navigation
@@ -454,6 +530,15 @@ export default function App() {
       <PenaltyZoneModal
         isOpen={Boolean(player.isPenaltyZone || (player.hp !== undefined && player.hp <= 0))}
         onSurvive={handleClearPenalty}
+      />
+
+      {/* First-Time Hunter Awakening & LINE Connection Onboarding Modal */}
+      <HunterOnboardingModal
+        isOpen={isOnboardingOpen}
+        onCompleteOnboarding={handleCompleteOnboarding}
+        initialLineUser={initialLineAuth}
+        lineOaBasicId={lineOaBasicId}
+        lineLoginConfigured={lineLoginConfigured}
       />
     </div>
   );

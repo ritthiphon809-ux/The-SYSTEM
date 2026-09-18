@@ -369,8 +369,17 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
               <strong>Channel access token (long-lived)</strong> (ในแท็บ Messaging API) ไปใส่ใน Environment variables:
               <div className="mt-1 p-2 bg-slate-900 rounded font-mono text-[11px] text-cyan-300">
                 LINE_CHANNEL_SECRET=xxx<br />
-                LINE_CHANNEL_ACCESS_TOKEN=yyy
+                LINE_CHANNEL_ACCESS_TOKEN=yyy<br />
+                LINE_LOGIN_CHANNEL_ID=zzz<br />
+                LINE_LOGIN_CHANNEL_SECRET=aaa<br />
+                LINE_OA_BASIC_ID=@yourlineoa
               </div>
+            </li>
+            <li>
+              สำหรับ <strong>LINE Login (สร้างโปรไฟล์และออโต้แอดเพื่อน OA)</strong>:
+              สร้าง Channel ชนิด <strong>LINE Login</strong> &gt; ในแท็บ <strong>LINE Login</strong> ใส่ Callback URL:{' '}
+              <code className="text-cyan-300 select-all font-mono">{typeof window !== 'undefined' ? `${window.location.origin}/api/auth/line/callback` : '/api/auth/line/callback'}</code>{' '}
+              และในหัวข้อ <strong>Linked OA</strong> ให้เลือกเชื่อมต่อกับ LINE Official Account ของคุณ พร้อมตั้งค่า <em>Bot prompt: Aggressive</em> เพื่อให้ผู้เล่นแอด LINE OA ทันทีตอนกดยืนยันล็อกอิน
             </li>
             <li>
               เข้าสู่{' '}

@@ -6,9 +6,10 @@ import { Player } from '../types.ts';
 interface SystemHeaderProps {
   player: Player;
   onResetDemo: () => void;
+  onOpenHunterProfile?: () => void;
 }
 
-export function SystemHeader({ player, onResetDemo }: SystemHeaderProps) {
+export function SystemHeader({ player, onResetDemo, onOpenHunterProfile }: SystemHeaderProps) {
   const [audioOn, setAudioOn] = useState(true);
   const [time, setTime] = useState('');
 
@@ -55,8 +56,24 @@ export function SystemHeader({ player, onResetDemo }: SystemHeaderProps) {
           </div>
         </div>
 
-        {/* Right Controls: Audio toggle & Demo indicator */}
+        {/* Right Controls: Audio toggle, Hunter Awakening button & Demo indicator */}
         <div className="flex items-center gap-2">
+          {onOpenHunterProfile && (
+            <button
+              onClick={() => {
+                playUiClick();
+                onOpenHunterProfile();
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-[11px] font-mono-system text-cyan-300 transition-all shadow-[0_0_10px_rgba(56,189,248,0.2)]"
+              title="Hunter Profile & LINE Connection"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span className="font-bold truncate max-w-[90px] sm:max-w-[130px]">
+                {player.displayName || 'AWAKEN HUNTER'}
+              </span>
+            </button>
+          )}
+
           {player.isDemo && (
             <button
               onClick={() => {

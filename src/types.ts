@@ -33,6 +33,15 @@ export interface Player {
   heartRate: number;
   caloriesBurned: number;
   isPenaltyZone: boolean;
+  // LINE Authentication & Onboarding
+  lineUserId?: string;
+  lineDisplayName?: string;
+  linePictureUrl?: string;
+  isLineConnected?: boolean;
+  isRegistered?: boolean;
+  fitnessGoal?: 'FAT_LOSS' | 'MUSCLE_GAIN' | 'ENDURANCE' | 'SOLO_LEVELING';
+  weightKg?: number;
+  heightCm?: number;
 }
 
 export type QuestDifficulty = 'EASY' | 'NORMAL' | 'HARD' | 'ELITE';

@@ -126,7 +126,184 @@ async function startServer() {
 
   // 2. Get Player State
   app.get('/api/player', (_req, res) => {
-    res.json({ player: currentPlayer });
+    res.json({
+      player: currentPlayer,
+      lineOaBasicId: process.env.LINE_OA_BASIC_ID || '',
+      lineLoginConfigured: Boolean(process.env.LINE_LOGIN_CHANNEL_ID && process.env.LINE_LOGIN_CHANNEL_SECRET)
+    });
+  });
+
+  // 2.0 Register / Onboard New Hunter Profile (Solo Leveling Awakening)
+  app.post('/api/player/register', (req, res) => {
+    const { displayName, fitnessGoal, weightKg, heightCm, lineUserId, lineDisplayName, linePictureUrl } = req.body;
+    if (!displayName || !displayName.trim()) {
+      return res.status(400).json({ error: 'Hunter codename is required.' });
+    }
+
+    const baseVit = fitnessGoal === 'ENDURANCE' ? 7 : 5;
+    const baseStr = fitnessGoal === 'MUSCLE_GAIN' ? 7 : 5;
+    const baseAgi = fitnessGoal === 'FAT_LOSS' ? 7 : 5;
+    const baseInt = 5;
+
+    currentPlayer = {
+      ...currentPlayer,
+      id: lineUserId ? `player-${lineUserId}` : `hunter-${Date.now()}`,
+      displayName: displayName.trim().toUpperCase(),
+      lineUserId: lineUserId || currentPlayer.lineUserId,
+      lineDisplayName: lineDisplayName || currentPlayer.lineDisplayName,
+      linePictureUrl: linePictureUrl || currentPlayer.linePictureUrl,
+      isLineConnected: Boolean(lineUserId || currentPlayer.isLineConnected),
+      isRegistered: true,
+      isDemo: false,
+      fitnessGoal: fitnessGoal || 'SOLO_LEVELING',
+      weightKg: Number(weightKg) || undefined,
+      heightCm: Number(heightCm) || undefined,
+      level: 1,
+      xp: 0,
+      currentLevelMaxXp: 100,
+      rank: 'E',
+      stats: {
+        STR: baseStr,
+        AGI: baseAgi,
+        VIT: baseVit,
+        INT: baseInt
+      },
+      hp: PROGRESSION_CONFIG.calculateMaxHp(baseVit),
+      maxHp: PROGRESSION_CONFIG.calculateMaxHp(baseVit),
+      stamina: PROGRESSION_CONFIG.calculateMaxStamina(baseAgi),
+      maxStamina: PROGRESSION_CONFIG.calculateMaxStamina(baseAgi),
+      statPoints: 0,
+      streak: 0,
+      totalQuestCompleted: 0,
+      totalWorkoutMinutes: 0,
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString()
+    };
+
+    if (lineUserId) {
+      connectedLineUserIds.add(lineUserId);
+    }
+
+    eventLogs.unshift({
+      id: `evt-${Date.now()}-awaken`,
+      type: 'RANK_UP',
+      title: '[SYSTEM NOTIFICATION: HUNTER AWAKENED]',
+      description: `Player [${currentPlayer.displayName}] has been registered into THE SYSTEM as Rank E Hunter. Biological ascension protocol initiated.`,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      player: currentPlayer,
+      message: `Hunter ${currentPlayer.displayName} registered successfully.`
+    });
+  });
+
+  // 2.0.1 Generate LINE Login URL with bot_prompt to Auto-Add LINE OA as Friend
+  app.get('/api/auth/line/login-url', (req, res) => {
+    const channelId = process.env.LINE_LOGIN_CHANNEL_ID;
+    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = `${appUrl}/api/auth/line/callback`;
+
+    if (!channelId) {
+      return res.json({
+        available: false,
+        message: 'LINE_LOGIN_CHANNEL_ID is not configured in environment.'
+      });
+    }
+
+    const state = `state_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const lineAuthUrl =
+      `https://access.line.me/oauth2/v2.1/authorize?` +
+      `response_type=code` +
+      `&client_id=${channelId}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&state=${state}` +
+      `&scope=profile%20openid` +
+      `&bot_prompt=aggressive`; // 'aggressive' opens friend addition prompt for THE SYSTEM LINE OA!
+
+    res.json({
+      available: true,
+      authUrl: lineAuthUrl,
+      redirectUri
+    });
+  });
+
+  // 2.0.2 Handle LINE OAuth Callback (Exchange code for profile)
+  app.get('/api/auth/line/callback', async (req, res) => {
+    const { code, state, error, error_description } = req.query;
+    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+    if (error) {
+      console.warn('[LINE LOGIN] Error received:', error, error_description);
+      return res.redirect(`${appUrl}/?line_auth_error=${encodeURIComponent(String(error_description || error))}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${appUrl}/?line_auth_error=missing_code`);
+    }
+
+    const channelId = process.env.LINE_LOGIN_CHANNEL_ID;
+    const channelSecret = process.env.LINE_LOGIN_CHANNEL_SECRET;
+    const redirectUri = `${appUrl}/api/auth/line/callback`;
+
+    if (!channelId || !channelSecret) {
+      return res.redirect(`${appUrl}/?line_auth_error=channel_credentials_missing`);
+    }
+
+    try {
+      // 1. Exchange authorization code for access token
+      const tokenResp = await fetch('https://api.line.me/oauth2/v2.1/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: String(code),
+          redirect_uri: redirectUri,
+          client_id: channelId,
+          client_secret: channelSecret
+        }).toString()
+      });
+
+      const tokenData = await tokenResp.json();
+      if (!tokenData.access_token) {
+        console.error('[LINE LOGIN] Token exchange failed:', tokenData);
+        return res.redirect(`${appUrl}/?line_auth_error=token_exchange_failed`);
+      }
+
+      // 2. Fetch User Profile
+      const profileResp = await fetch('https://api.line.me/v2/profile', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const profile = await profileResp.json();
+
+      if (!profile.userId) {
+        return res.redirect(`${appUrl}/?line_auth_error=profile_fetch_failed`);
+      }
+
+      // Register LINE user in memory
+      connectedLineUserIds.add(profile.userId);
+      currentPlayer = {
+        ...currentPlayer,
+        lineUserId: profile.userId,
+        lineDisplayName: profile.displayName,
+        linePictureUrl: profile.pictureUrl,
+        isLineConnected: true
+      };
+
+      // Redirect back with profile parameters for onboarding
+      const queryParams = new URLSearchParams({
+        line_userId: profile.userId,
+        line_name: profile.displayName || '',
+        line_pic: profile.pictureUrl || '',
+        line_auth_success: '1'
+      });
+
+      res.redirect(`${appUrl}/?${queryParams.toString()}`);
+    } catch (err: any) {
+      console.error('[LINE LOGIN] Callback error:', err);
+      res.redirect(`${appUrl}/?line_auth_error=server_exception`);
+    }
   });
 
   // 2.1 Allocate Stat Points (STR, AGI, VIT, INT)
