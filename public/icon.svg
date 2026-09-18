@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#05070a"/>
+  <defs>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <!-- Geometric System Frame -->
+  <polygon points="256,48 440,154 440,366 256,472 72,366 72,154" fill="none" stroke="#0ea5e9" stroke-width="4" opacity="0.3"/>
+  <!-- Inner Hexagon -->
+  <polygon points="256,92 398,174 398,338 256,420 114,338 114,174" fill="#0a101d" stroke="#38bdf8" stroke-width="6" filter="url(#glow)"/>
+  <!-- Core Monogram S and Ascension Arrow -->
+  <path d="M256,140 L310,210 L280,210 L280,290 L232,290 L232,210 L202,210 Z" fill="url(#cyanGrad)"/>
+  <path d="M190,320 L322,320 L322,340 L190,340 Z" fill="#38bdf8" opacity="0.8"/>
+  <path d="M214,354 L298,354 L298,368 L214,368 Z" fill="#38bdf8" opacity="0.5"/>
+</svg>
