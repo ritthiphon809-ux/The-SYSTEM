@@ -9,7 +9,6 @@ import {
   Bell,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
   ExternalLink,
   ShieldCheck,
   RefreshCw,
@@ -18,7 +17,10 @@ import {
   Users,
   Radio,
   Activity,
-  Clock
+  Clock,
+  Settings as SettingsIcon,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { playUiClick, playWarningSound, playLevelUpSound } from '../utils/audio.ts';
 import { promptPwaInstall, canInstallPwa } from '../utils/pwa.ts';
@@ -39,11 +41,13 @@ interface LineStatus {
 }
 
 export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: SettingsViewProps) {
+  const [activeTab, setActiveTab] = useState<'line_setup' | 'simulator' | 'preferences'>('line_setup');
   const [lineSimInput, setLineSimInput] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushStatusMessage, setPushStatusMessage] = useState<string | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [showSetupSteps, setShowSetupSteps] = useState(false);
   const [lineStatus, setLineStatus] = useState<LineStatus>({
     isConfigured: false,
     hasSecret: false,
@@ -155,7 +159,6 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
     }
   };
 
-  // Simulate LINE interaction through `/api/line/simulate`
   const triggerLineSimAction = async (action: string, customText?: string) => {
     playUiClick();
     setIsSimulating(true);
@@ -192,7 +195,6 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
       setIsSimulating(false);
       setLineSimInput('');
       fetchReminders();
-      // Synchronize player & quest state with parent component
       onCompleteQuest();
     }
   };
@@ -203,578 +205,502 @@ export function SettingsView({ player, quest, onResetDemo, onCompleteQuest }: Se
       : '/api/line/webhook';
 
   return (
-    <div className="space-y-6 pb-12 font-sans">
-      {/* 1. LINE Messaging API Architecture & Webhook Configuration */}
-      <section className="bg-[#080d1a] border border-cyan-950 rounded-sm p-5 system-bracket">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-xs font-mono-system font-bold text-slate-200 tracking-wider uppercase">
-              LINE MESSAGING API INTEGRATION PROTOCOL (ข้อ 1: เชื่อมต่อ LINE OFFICIAL ACCOUNT)
-            </h2>
-          </div>
-          <button
-            onClick={fetchLineStatus}
-            className="text-[10px] font-mono-system text-slate-400 hover:text-cyan-400 flex items-center gap-1 transition-colors"
-          >
-            <RefreshCw className="w-3 h-3" />
-            <span>CHECK STATUS</span>
-          </button>
+    <div className="space-y-4 pb-12 font-sans">
+      {/* Tab Navigation Pill Bar */}
+      <div className="flex items-center gap-1.5 p-1 bg-[#060b16] border border-cyan-950 rounded-sm font-mono-system text-xs overflow-x-auto">
+        <button
+          onClick={() => {
+            playUiClick();
+            setActiveTab('line_setup');
+          }}
+          className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors font-bold ${
+            activeTab === 'line_setup'
+              ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+              : 'text-slate-400 hover:text-cyan-300'
+          }`}
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          <span>1. LINE SETUP</span>
+        </button>
+
+        <button
+          onClick={() => {
+            playUiClick();
+            setActiveTab('simulator');
+          }}
+          className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors font-bold ${
+            activeTab === 'simulator'
+              ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+              : 'text-slate-400 hover:text-cyan-300'
+          }`}
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          <span>2. SIMULATOR & QUEUE</span>
+        </button>
+
+        <button
+          onClick={() => {
+            playUiClick();
+            setActiveTab('preferences');
+          }}
+          className={`flex-1 py-2 px-3 rounded flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors font-bold ${
+            activeTab === 'preferences'
+              ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+              : 'text-slate-400 hover:text-cyan-300'
+          }`}
+        >
+          <SettingsIcon className="w-3.5 h-3.5" />
+          <span>3. PREFERENCES</span>
+        </button>
+      </div>
+
+      {/* TAB 1: LINE SETUP & WEBHOOK */}
+      {activeTab === 'line_setup' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <section className="bg-[#080d1a] border border-cyan-950/80 rounded-sm p-4 system-bracket">
+            <div className="flex items-center justify-between gap-2 border-b border-cyan-950/60 pb-3 mb-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-emerald-400" />
+                <h2 className="text-xs font-mono-system font-bold text-slate-200 uppercase tracking-wider">
+                  LINE MESSAGING API STATUS
+                </h2>
+              </div>
+              <button
+                onClick={fetchLineStatus}
+                className="text-[11px] font-mono-system text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>CHECK STATUS</span>
+              </button>
+            </div>
+
+            {/* Live Status Indicators */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-4 font-mono-system text-xs">
+              <div className="p-2.5 bg-slate-950 border border-slate-900 rounded">
+                <div className="text-[10px] text-slate-500 uppercase">CHANNEL SECRET</div>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {lineStatus.hasSecret ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-bold">CONFIGURED</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-amber-400 font-bold">NOT DETECTED</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-2.5 bg-slate-950 border border-slate-900 rounded">
+                <div className="text-[10px] text-slate-500 uppercase">ACCESS TOKEN</div>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {lineStatus.hasToken ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-bold">CONFIGURED</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-amber-400 font-bold">NOT DETECTED</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-2.5 bg-slate-950 border border-slate-900 rounded">
+                <div className="text-[10px] text-slate-500 uppercase">CONNECTED USERS</div>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <Users className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="text-cyan-300 font-bold">
+                    {lineStatus.connectedUsersCount} {lineStatus.connectedUsersCount === 1 ? 'USER' : 'USERS'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Webhook URL with Copy button */}
+            <div className="p-3 bg-slate-950 border border-slate-900 rounded font-mono-system text-xs space-y-2 mb-3">
+              <div className="flex justify-between items-center text-[10px]">
+                <span className="font-bold text-slate-300 uppercase">
+                  WEBHOOK URL FOR LINE DEVELOPERS
+                </span>
+                <span className="text-emerald-400 flex items-center gap-1">
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  ACTIVE
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 p-2 bg-slate-900 border border-slate-800 rounded text-cyan-300 break-all select-all text-xs font-mono">
+                  {webhookUrlDisplay}
+                </div>
+                <button
+                  onClick={handleCopyWebhook}
+                  className="px-3 py-2 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"
+                >
+                  {copiedWebhook ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">COPIED</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>COPY</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Push Test Controls */}
+            <div className="p-3 bg-slate-950 border border-cyan-950/60 rounded font-mono-system text-xs space-y-2">
+              <div className="text-[10px] text-slate-400 font-bold uppercase">
+                TEST PUSH DISPATCH TO REAL LINE USERS:
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => handlePushRealLine('briefing')}
+                  disabled={isPushing}
+                  className="px-2.5 py-1.5 rounded bg-sky-950 hover:bg-sky-900 border border-sky-500/40 text-sky-300 text-xs flex items-center gap-1"
+                >
+                  <Activity className="w-3 h-3 text-sky-400" />
+                  <span>08:00 BRIEFING</span>
+                </button>
+                <button
+                  onClick={() => handlePushRealLine('quest')}
+                  disabled={isPushing}
+                  className="px-2.5 py-1.5 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-1"
+                >
+                  <Bell className="w-3 h-3 text-cyan-400" />
+                  <span>07:00 QUEST</span>
+                </button>
+                <button
+                  onClick={() => handlePushRealLine('reminder')}
+                  disabled={isPushing}
+                  className="px-2.5 py-1.5 rounded bg-rose-950 hover:bg-rose-900 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-1"
+                >
+                  <AlertCircle className="w-3 h-3 text-rose-400" />
+                  <span>20:00 REMINDER</span>
+                </button>
+              </div>
+
+              {pushStatusMessage && (
+                <div className="p-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 mt-2">
+                  {pushStatusMessage}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Collapsible 4-Step Setup Guide */}
+          <section className="bg-[#070b14] border border-slate-900 rounded-sm p-4 font-mono-system text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-slate-300 font-bold">
+                <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                <span>คู่มือการเชื่อมต่อ LINE OFFICIAL ACCOUNT (4 ขั้นตอน)</span>
+              </div>
+              <button
+                onClick={() => {
+                  playUiClick();
+                  setShowSetupSteps(!showSetupSteps);
+                }}
+                className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+              >
+                <span>{showSetupSteps ? 'ย่อคู่มือ' : 'อ่านคู่มือ'}</span>
+                {showSetupSteps ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+
+            {showSetupSteps && (
+              <ol className="mt-3 pt-3 border-t border-slate-900 space-y-2.5 list-decimal list-inside leading-relaxed text-slate-300 font-sans text-xs animate-in fade-in duration-200">
+                <li>
+                  ไปที่{' '}
+                  <a
+                    href="https://developers.line.biz/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-400 underline inline-flex items-center gap-0.5"
+                  >
+                    LINE Developers Console <ExternalLink className="w-3 h-3" />
+                  </a>{' '}
+                  สร้าง Channel ประเภท <strong>Messaging API</strong>
+                </li>
+                <li>
+                  ในแท็บ <strong>Messaging API</strong> ใส่ Webhook URL ด้านบน กดปุ่ม <strong>Verify</strong> แล้วเปิดสวิตช์{' '}
+                  <strong className="text-emerald-400">Use webhook: ON</strong>
+                </li>
+                <li>
+                  คัดลอก <strong>Channel secret</strong> และ <strong>Channel access token (long-lived)</strong> ใส่ใน Environment variables:
+                  <div className="mt-1 p-2 bg-slate-950 border border-slate-900 rounded font-mono text-[11px] text-cyan-300">
+                    LINE_CHANNEL_SECRET=xxx<br />
+                    LINE_CHANNEL_ACCESS_TOKEN=yyy<br />
+                    APP_URL={webhookUrlDisplay.replace('/api/line/webhook', '')}
+                  </div>
+                </li>
+                <li>
+                  ใน{' '}
+                  <a
+                    href="https://manager.line.biz/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-400 underline inline-flex items-center gap-0.5"
+                  >
+                    LINE Official Account Manager <ExternalLink className="w-3 h-3" />
+                  </a>{' '}
+                  &gt; Settings &gt; Response settings ปิด <strong>Auto-response messages: OFF</strong> และ{' '}
+                  <strong>Greeting message: OFF</strong> เพื่อให้ระบบส่ง Flex Message อัตโนมัติ 100%
+                </li>
+              </ol>
+            )}
+          </section>
         </div>
+      )}
 
-        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-          Per architecture specification: <strong className="text-cyan-300">LINE = System Interface</strong>,{' '}
-          <strong className="text-cyan-300">WEB APP = Player Dashboard</strong>. เมื่อเชื่อมต่อ LINE Official
-          Account จริง ผู้ใช้จะได้รับการแจ้งเตือนเควสต์อัตโนมัติเวลา <strong className="text-white">07:00</strong>{' '}
-          และการแจ้งเตือนด่วนเวลา <strong className="text-white">20:00</strong> รวมถึงสามารถส่งข้อความปรับภารกิจ
-          และกดสำเร็จเควสต์ผ่านแอป LINE ได้โดยตรง
-        </p>
-
-        {/* Live Status Indicators */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 font-mono-system text-xs">
-          <div className="p-3 bg-slate-950 border border-slate-900 rounded">
-            <div className="text-[10px] text-slate-500 mb-1">LINE CHANNEL SECRET</div>
-            <div className="flex items-center gap-1.5">
-              {lineStatus.hasSecret ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400 font-bold">CONFIGURED</span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-amber-400 font-bold">NOT DETECTED</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="p-3 bg-slate-950 border border-slate-900 rounded">
-            <div className="text-[10px] text-slate-500 mb-1">CHANNEL ACCESS TOKEN</div>
-            <div className="flex items-center gap-1.5">
-              {lineStatus.hasToken ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400 font-bold">CONFIGURED</span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-amber-400 font-bold">NOT DETECTED</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="p-3 bg-slate-950 border border-slate-900 rounded">
-            <div className="text-[10px] text-slate-500 mb-1">CONNECTED LINE HUNTERS</div>
-            <div className="flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-cyan-300 font-bold">
-                {lineStatus.connectedUsersCount} {lineStatus.connectedUsersCount === 1 ? 'USER' : 'USERS'}
+      {/* TAB 2: TERMINAL SIMULATOR & REMINDERS QUEUE */}
+      {activeTab === 'simulator' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <section className="bg-[#090e1b] border-2 border-cyan-500/40 rounded-sm p-4 system-bracket">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-xs font-mono-system font-bold text-cyan-300 uppercase tracking-wider">
+                  LINE SYSTEM TERMINAL SIMULATOR
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono-system text-slate-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded">
+                SIMULATION SANDBOX
               </span>
             </div>
-          </div>
-        </div>
 
-        {/* Webhook URL with Copy button */}
-        <div className="p-3.5 bg-slate-950 border border-slate-900 rounded font-mono-system text-xs space-y-2 mb-4">
-          <div className="flex justify-between items-center text-slate-400 text-[10px]">
-            <span className="font-bold tracking-wider text-slate-300 uppercase">
-              1. WEBHOOK URL (นำไปใส่ใน LINE DEVELOPERS CONSOLE)
-            </span>
-            <span className="text-emerald-400 flex items-center gap-1">
-              <Radio className="w-3 h-3 animate-pulse" />
-              ENDPOINT ACTIVE
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 p-2 bg-slate-900 border border-slate-800 rounded text-cyan-300 break-all select-all text-xs font-mono">
-              {webhookUrlDisplay}
-            </div>
-            <button
-              onClick={handleCopyWebhook}
-              className="px-3 py-2 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-1 transition-colors whitespace-nowrap"
-            >
-              {copiedWebhook ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">COPIED!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>COPY URL</span>
-                </>
-              )}
-            </button>
-          </div>
-          <div className="text-[11px] text-slate-400">
-            เปิด <strong>LINE Developers Console</strong> &gt; Channel ของคุณ &gt; แท็บ{' '}
-            <strong className="text-white">Messaging API</strong> &gt; หัวข้อ <em>Webhook settings</em> แล้วใส่ URL
-            นี้ จากนั้นกด <strong>Verify</strong> และเปิดสวิตช์ <strong className="text-emerald-400">Use webhook</strong>
-          </div>
-        </div>
-
-        {/* Real LINE Push Notification Test Controls */}
-        <div className="p-3.5 bg-slate-950 border border-cyan-950/60 rounded font-mono-system text-xs space-y-3 mb-4">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-300 font-bold uppercase text-[10px] tracking-wider">
-              2. TEST DISPATCH TO REAL LINE (ทดสอบส่งแจ้งเตือนไปยัง LINE จริง)
-            </span>
-            <span className="text-[10px] text-slate-500">PUSH MESSAGING API</span>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => handlePushRealLine('briefing')}
-              disabled={isPushing}
-              className="px-3 py-2 rounded bg-sky-950/80 hover:bg-sky-900 border border-sky-500/50 text-sky-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            >
-              <Activity className="w-3.5 h-3.5 text-sky-400" />
-              <span>TEST PUSH 08:00 BRIEFING</span>
-            </button>
-
-            <button
-              onClick={() => handlePushRealLine('quest')}
-              disabled={isPushing}
-              className="px-3 py-2 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            >
-              <Bell className="w-3.5 h-3.5 text-cyan-400" />
-              <span>TEST PUSH 07:00 QUEST</span>
-            </button>
-
-            <button
-              onClick={() => handlePushRealLine('reminder')}
-              disabled={isPushing}
-              className="px-3 py-2 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            >
-              <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-              <span>TEST PUSH 20:00 REMINDER</span>
-            </button>
-          </div>
-
-          {pushStatusMessage && (
-            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200">
-              {pushStatusMessage}
-            </div>
-          )}
-        </div>
-
-        {/* Step-by-Step Production Guide */}
-        <div className="p-4 bg-slate-950/80 border border-slate-900 rounded font-sans text-xs text-slate-400 space-y-3">
-          <div className="font-mono-system font-bold text-slate-200 text-xs flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <span>ขั้นตอนการตั้งค่า LINE Official Account ให้สมบูรณ์แบบ (4 STEPS):</span>
-          </div>
-
-          <ol className="space-y-2 list-decimal list-inside leading-relaxed text-[12px]">
-            <li>
-              เข้าสู่{' '}
-              <a
-                href="https://developers.line.biz/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-cyan-400 underline hover:text-cyan-300 inline-flex items-center gap-0.5"
+            {/* Action Simulator Buttons */}
+            <div className="flex flex-wrap gap-1.5 mb-3 font-mono-system text-[11px]">
+              <button
+                onClick={() => triggerLineSimAction('GET_BRIEFING_FLEX')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-sky-800 text-sky-300 hover:bg-sky-950"
               >
-                LINE Developers Console <ExternalLink className="w-3 h-3 inline" />
-              </a>{' '}
-              สร้าง Provider และ Channel ประเภท <strong>Messaging API</strong>
-            </li>
-            <li>
-              ในแท็บ <strong>Messaging API</strong> ใส่ Webhook URL ด้านบน กดปุ่ม <strong>Verify</strong> (ระบบจะตอบรับ 200 OK) แล้วเปิดสวิตช์{' '}
-              <strong className="text-emerald-400">Use webhook: ON</strong>
-            </li>
-            <li>
-              คัดลอก <strong>Channel secret</strong> (ในแท็บ Basic settings) และ{' '}
-              <strong>Channel access token (long-lived)</strong> (ในแท็บ Messaging API) ไปใส่ใน Environment variables:
-              <div className="mt-1 p-2 bg-slate-900 rounded font-mono text-[11px] text-cyan-300">
-                LINE_CHANNEL_SECRET=xxx<br />
-                LINE_CHANNEL_ACCESS_TOKEN=yyy<br />
-                LINE_LOGIN_CHANNEL_ID=zzz<br />
-                LINE_LOGIN_CHANNEL_SECRET=aaa<br />
-                LINE_OA_BASIC_ID=@yourlineoa
-              </div>
-            </li>
-            <li>
-              สำหรับ <strong>LINE Login (สร้างโปรไฟล์และออโต้แอดเพื่อน OA)</strong>:
-              สร้าง Channel ชนิด <strong>LINE Login</strong> &gt; ในแท็บ <strong>LINE Login</strong> ใส่ Callback URL:{' '}
-              <code className="text-cyan-300 select-all font-mono">{typeof window !== 'undefined' ? `${window.location.origin}/api/auth/line/callback` : '/api/auth/line/callback'}</code>{' '}
-              และในหัวข้อ <strong>Linked OA</strong> ให้เลือกเชื่อมต่อกับ LINE Official Account ของคุณ พร้อมตั้งค่า <em>Bot prompt: Aggressive</em> เพื่อให้ผู้เล่นแอด LINE OA ทันทีตอนกดยืนยันล็อกอิน
-            </li>
-            <li>
-              เข้าสู่{' '}
-              <a
-                href="https://manager.line.biz/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-cyan-400 underline hover:text-cyan-300 inline-flex items-center gap-0.5"
+                08:00 BRIEFING
+              </button>
+              <button
+                onClick={() => triggerLineSimAction('GET_QUEST_FLEX')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800 text-cyan-300 hover:bg-cyan-950"
               >
-                LINE Official Account Manager <ExternalLink className="w-3 h-3 inline" />
-              </a>{' '}
-              ไปที่ <em>Settings &gt; Response settings</em> ปิด <strong>Auto-response messages: OFF</strong> และ{' '}
-              <strong>Greeting message: OFF</strong> (เพื่อให้ THE SYSTEM ควบคุมการส่งข้อความ Cyberpunk Flex Message เอง 100%)
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      {/* 2. Interactive In-App LINE Bot Simulator */}
-      <section className="bg-[#090e1b] border-2 border-cyan-500/40 rounded-sm p-5 system-bracket shadow-[0_0_20px_rgba(56,189,248,0.1)]">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <div className="flex items-center gap-2">
-            <Smartphone className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-xs font-mono-system font-bold text-cyan-300 uppercase tracking-wider">
-              IN-APP LINE SYSTEM TERMINAL SIMULATOR
-            </h3>
-          </div>
-          <span className="text-[10px] font-mono-system text-slate-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded">
-            NO CREDENTIALS REQUIRED FOR TESTING
-          </span>
-        </div>
-
-        {/* Quick Simulated Triggers */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          <button
-            onClick={() => triggerLineSimAction('GET_BRIEFING_FLEX')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-sky-950 hover:border-sky-500 text-sky-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Activity className="w-3.5 h-3.5 text-sky-400" />
-            <span>08:00 HEALTH BRIEFING</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('GET_QUEST_FLEX')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-cyan-950 hover:border-cyan-500 text-cyan-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Bell className="w-3.5 h-3.5 text-cyan-400" />
-            <span>DISPATCH QUEST NOTIFICATION</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('GET_REMINDER')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-amber-950 hover:border-amber-500 text-amber-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-            <span>SEND REMINDER</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('COMPLETE_VIA_LINE')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-emerald-950 hover:border-emerald-500 text-emerald-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>SIMULATE COMPLETE VIA LINE</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('TRIGGER_SURVEILLANCE')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-purple-950 hover:border-purple-500 text-purple-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Radio className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-            <span>SURVEILLANCE CHECK (สุ่มตรวจ)</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('TRIGGER_PENALTY')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-rose-950 hover:border-rose-500 text-rose-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-            <span>ENFORCE DEBUFF PENALTY (ลงโทษ)</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('TRIGGER_REST_DAY')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-indigo-950 hover:border-indigo-500 text-indigo-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-            <span>REQUEST REST DAY (ขอพัก)</span>
-          </button>
-
-          <button
-            onClick={() => triggerLineSimAction('GET_WEEKLY_SUMMARY')}
-            disabled={isSimulating}
-            className="px-3 py-1.5 rounded bg-slate-900 border border-cyan-950 hover:border-cyan-500 text-cyan-300 font-mono-system text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Activity className="w-3.5 h-3.5 text-cyan-400" />
-            <span>21:30 WEEKLY SUMMARY (สรุปสัปดาห์)</span>
-          </button>
-        </div>
-
-        {/* Simulated Chat Feed */}
-        <div className="h-64 overflow-y-auto bg-[#05070a] border border-slate-900 rounded p-4 space-y-3 font-mono-system text-xs">
-          {simChatMessages.map((msg, index) => (
-            <div
-              key={index}
-              className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
-            >
-              <div
-                className={`max-w-[85%] p-3 rounded ${
-                  msg.sender === 'user'
-                    ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200'
-                    : 'bg-slate-950 border border-cyan-950 text-cyan-200'
-                }`}
+                07:00 QUEST
+              </button>
+              <button
+                onClick={() => triggerLineSimAction('COMPLETE_VIA_LINE')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-emerald-800 text-emerald-300 hover:bg-emerald-950"
               >
-                <div className="text-[9px] text-slate-500 uppercase mb-1">
-                  {msg.sender === 'user' ? 'YOU (LINE APP)' : 'THE SYSTEM (LINE BOT)'}
-                </div>
-                {msg.text && <div className="whitespace-pre-line leading-relaxed">{msg.text}</div>}
-
-                {/* Render Simulated LINE Flex Card */}
-                {msg.flex && (
-                  <div className="mt-3 p-3 bg-[#0a0f1d] border border-cyan-500/40 rounded text-slate-200 space-y-2 shadow-lg">
-                    <div className="text-[10px] text-cyan-400 font-bold tracking-wider uppercase">
-                      [LINE FLEX MESSAGE PREVIEW]
-                    </div>
-                    <div className="font-bold text-sm text-white">{quest.title}</div>
-                    <div className="text-xl font-bold text-cyan-300">
-                      {quest.target} {quest.unit.toUpperCase()}
-                    </div>
-                    <div className="text-[11px] text-slate-400">{quest.description}</div>
-                    <div className="pt-2 border-t border-slate-800 flex gap-2">
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900">
-                        +{quest.xpReward} XP
-                      </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-900">
-                        DL: {quest.deadline}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+                COMPLETE QUEST
+              </button>
+              <button
+                onClick={() => triggerLineSimAction('TRIGGER_SURVEILLANCE')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-purple-800 text-purple-300 hover:bg-purple-950"
+              >
+                SURVEILLANCE CHECK
+              </button>
+              <button
+                onClick={() => triggerLineSimAction('TRIGGER_PENALTY')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-rose-800 text-rose-300 hover:bg-rose-950"
+              >
+                PENALTY DEBUFF
+              </button>
+              <button
+                onClick={() => triggerLineSimAction('TRIGGER_REST_DAY')}
+                disabled={isSimulating}
+                className="px-2.5 py-1 rounded bg-slate-900 border border-indigo-800 text-indigo-300 hover:bg-indigo-950"
+              >
+                REQUEST REST DAY
+              </button>
             </div>
-          ))}
-        </div>
 
-        {/* Input Bar */}
-        <div className="mt-3 flex gap-2">
-          <input
-            type="text"
-            value={lineSimInput}
-            onChange={(e) => setLineSimInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') triggerLineSimAction('CHAT', lineSimInput);
-            }}
-            placeholder="Type LINE message (e.g. 'มีเวลาแค่ 20 นาที')"
-            disabled={isSimulating}
-            className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
-          />
-          <button
-            onClick={() => triggerLineSimAction('CHAT', lineSimInput)}
-            disabled={isSimulating || !lineSimInput.trim()}
-            className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold font-mono-system text-xs uppercase flex items-center gap-1.5 disabled:opacity-50"
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>SEND</span>
-          </button>
-        </div>
-
-        {/* Quick Test Reminder Directives */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] font-mono-system">
-          <span className="text-slate-400 font-semibold flex items-center gap-1">
-            <Clock className="w-3 h-3 text-cyan-400" /> คำสั่งเตือน:
-          </span>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'เตือนอีก 10 นาที')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
-          >
-            "เตือนอีก 10 นาที"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'เตือนตอน 15:46')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
-          >
-            "เตือนตอน 15:46"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'เตือนตอน 1 ทุ่ม')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
-          >
-            "เตือนตอน 1 ทุ่ม"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'เตือนหน่อย')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-amber-900/60 text-amber-300 hover:bg-amber-950/80 hover:border-amber-400 transition-colors"
-            title="ทดสอบการปฏิเสธคำสั่งกำกวมที่ไม่มีเวลาแน่ชัด"
-          >
-            "เตือนหน่อย" (ทดสอบเวลากำกวม)
-          </button>
-        </div>
-
-        {/* Anime System & Surveillance Command Chips */}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-mono-system">
-          <span className="text-slate-400 font-semibold flex items-center gap-1">
-            <Radio className="w-3 h-3 text-purple-400" /> คำสั่งระบบ / ตรวจสอบ:
-          </span>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'ทำแล้ว')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-emerald-800/60 text-emerald-300 hover:bg-emerald-950/80 hover:border-emerald-400 transition-colors"
-          >
-            "ทำแล้ว"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'กำลังทำ')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-sky-800/60 text-sky-300 hover:bg-sky-950/80 hover:border-sky-400 transition-colors"
-          >
-            "กำลังทำ"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'ยังไม่ทำ')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-rose-800/60 text-rose-300 hover:bg-rose-950/80 hover:border-rose-400 transition-colors"
-          >
-            "ยังไม่ทำ"
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'ขอพัก')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-indigo-800/60 text-indigo-300 hover:bg-indigo-950/80 hover:border-indigo-400 transition-colors"
-          >
-            "ขอพัก" (Rest Day)
-          </button>
-          <button
-            onClick={() => triggerLineSimAction('CHAT', 'สรุปสัปดาห์')}
-            disabled={isSimulating}
-            className="px-2.5 py-1 rounded bg-slate-900 border border-cyan-800/60 text-cyan-300 hover:bg-cyan-950/80 hover:border-cyan-400 transition-colors"
-          >
-            "สรุปสัปดาห์" (Weekly Evaluation)
-          </button>
-        </div>
-
-        {/* Pending Reminders Queue Dashboard */}
-        <div className="mt-4 pt-3 border-t border-slate-900">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5 text-xs font-mono-system font-bold text-slate-300">
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
-              <span>SCHEDULED REMINDERS QUEUE ({reminders.filter((r) => !r.sent).length} PENDING)</span>
-            </div>
-            <button
-              onClick={fetchReminders}
-              className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono-system flex items-center gap-1 transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" /> REFRESH
-            </button>
-          </div>
-
-          {reminders.length === 0 ? (
-            <div className="text-[11px] font-mono-system text-slate-500 italic py-1">
-              ยังไม่มีการตั้งเตือนในคิว — พิมพ์คำสั่ง เช่น "เตือนอีก 10 นาที" หรือ "เตือนตอน 15:46" เพื่อให้ระบบลงทะเบียน
-            </div>
-          ) : (
-            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-              {reminders.map((rem) => {
-                const remindDate = new Date(rem.remindAt);
-                const timeStr = remindDate.toLocaleTimeString('th-TH', {
-                  timeZone: 'Asia/Bangkok',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                });
-                const dateStr = remindDate.toLocaleDateString('th-TH', {
-                  timeZone: 'Asia/Bangkok',
-                  day: 'numeric',
-                  month: 'short'
-                });
-                return (
+            {/* Simulated Chat Feed */}
+            <div className="h-56 overflow-y-auto bg-[#05070a] border border-slate-900 rounded p-3 space-y-2.5 font-mono-system text-xs">
+              {simChatMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+                >
                   <div
-                    key={rem.id}
-                    className={`flex items-center justify-between text-xs font-mono-system p-2 rounded border transition-colors ${
-                      rem.sent
-                        ? 'bg-slate-950/50 border-slate-800 text-slate-500'
-                        : 'bg-cyan-950/30 border-cyan-500/40 text-cyan-200'
+                    className={`max-w-[85%] p-2.5 rounded ${
+                      msg.sender === 'user'
+                        ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200'
+                        : 'bg-slate-950 border border-cyan-950 text-cyan-200'
                     }`}
                   >
-                    <div className="flex items-center gap-2 truncate">
-                      <span
-                        className={`px-1.5 py-0.5 text-[9px] rounded font-bold ${
-                          rem.sent
-                            ? 'bg-slate-800 text-slate-400'
-                            : 'bg-cyan-900 text-cyan-300 border border-cyan-600'
-                        }`}
-                      >
-                        {rem.sent ? 'DISPATCHED' : 'SCHEDULED'}
-                      </span>
-                      <span className="font-semibold text-slate-200 shrink-0">
-                        {dateStr} {timeStr} น.
-                      </span>
-                      <span className="truncate text-slate-400 text-[11px]">
-                        {rem.message.replace(/\[.*?\]\n?/, '')}
-                      </span>
+                    <div className="text-[9px] text-slate-500 uppercase mb-1">
+                      {msg.sender === 'user' ? 'YOU (LINE)' : 'THE SYSTEM (BOT)'}
                     </div>
-                    <span className="text-[10px] text-slate-500 shrink-0 ml-2">
-                      Target: {rem.userId.slice(0, 10)}
-                    </span>
+                    {msg.text && <div className="whitespace-pre-line leading-relaxed">{msg.text}</div>}
+
+                    {msg.flex && (
+                      <div className="mt-2 p-2.5 bg-[#0a0f1d] border border-cyan-500/40 rounded text-slate-200 space-y-1.5 shadow-lg">
+                        <div className="text-[9px] text-cyan-400 font-bold uppercase">
+                          [LINE FLEX CARD PREVIEW]
+                        </div>
+                        <div className="font-bold text-xs text-white">{quest.title}</div>
+                        <div className="text-base font-bold text-cyan-300">
+                          {quest.target} {quest.unit.toUpperCase()}
+                        </div>
+                        <div className="pt-1 border-t border-slate-800 flex gap-2 text-[10px]">
+                          <span className="text-cyan-300">+{quest.xpReward} XP</span>
+                          <span className="text-rose-300">DL: {quest.deadline}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
-          )}
+
+            {/* Input Bar */}
+            <div className="mt-2.5 flex gap-2">
+              <input
+                type="text"
+                value={lineSimInput}
+                onChange={(e) => setLineSimInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') triggerLineSimAction('CHAT', lineSimInput);
+                }}
+                placeholder="พิมพ์ข้อความทดสอบ (เช่น 'เตือนอีก 10 นาที', 'ทำแล้ว')..."
+                disabled={isSimulating}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-mono-system"
+              />
+              <button
+                onClick={() => triggerLineSimAction('CHAT', lineSimInput)}
+                disabled={isSimulating || !lineSimInput.trim()}
+                className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold font-mono-system text-xs uppercase flex items-center gap-1 disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>SEND</span>
+              </button>
+            </div>
+
+            {/* Quick Command Chips */}
+            <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px] font-mono-system">
+              {['เตือนอีก 10 นาที', 'เตือนตอน 15:46', 'ทำแล้ว', 'กำลังทำ', 'ยังไม่ทำ', 'ขอพัก', 'สรุปสัปดาห์'].map(
+                (cmd) => (
+                  <button
+                    key={cmd}
+                    onClick={() => triggerLineSimAction('CHAT', cmd)}
+                    disabled={isSimulating}
+                    className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 hover:text-cyan-300 hover:border-cyan-800"
+                  >
+                    "{cmd}"
+                  </button>
+                )
+              )}
+            </div>
+          </section>
+
+          {/* Pending Reminders Queue */}
+          <section className="bg-[#070b14] border border-slate-900 rounded-sm p-3.5 font-mono-system text-xs">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5 font-bold text-slate-300">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                <span>SCHEDULED REMINDERS QUEUE ({reminders.filter((r) => !r.sent).length} PENDING)</span>
+              </div>
+              <button
+                onClick={fetchReminders}
+                className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" /> REFRESH
+              </button>
+            </div>
+
+            {reminders.length === 0 ? (
+              <div className="text-[11px] text-slate-500 italic py-1">
+                ยังไม่มีการตั้งเตือนในคิว
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                {reminders.map((rem) => {
+                  const remindDate = new Date(rem.remindAt);
+                  const timeStr = remindDate.toLocaleTimeString('th-TH', {
+                    timeZone: 'Asia/Bangkok',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  });
+                  return (
+                    <div
+                      key={rem.id}
+                      className="flex items-center justify-between text-[11px] p-1.5 rounded bg-slate-950 border border-slate-900"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span
+                          className={`px-1 py-0.2 text-[9px] rounded font-bold ${
+                            rem.sent ? 'text-slate-500' : 'text-cyan-400'
+                          }`}
+                        >
+                          {rem.sent ? 'SENT' : 'PENDING'}
+                        </span>
+                        <span className="text-slate-200 font-semibold">{timeStr} น.</span>
+                        <span className="text-slate-400 truncate">{rem.message}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
-      </section>
+      )}
 
-      {/* 3. PWA Installation & App Shell Controls */}
-      <section className="bg-[#080d1a] border border-cyan-950 rounded-sm p-5 system-bracket">
-        <div className="flex items-center gap-2 mb-3">
-          <Download className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-xs font-mono-system font-bold text-slate-200 uppercase tracking-wider">
-            PROGRESSIVE WEB APP (PWA) DEPLOYMENT
-          </h3>
-        </div>
-
-        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-          THE SYSTEM supports full standalone execution on Android, iOS Safari, and Desktop. Install to your
-          home screen to access the full-screen terminal interface with offline shell support.
-        </p>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={handleInstallClick}
-            className="px-4 py-2.5 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-400/50 text-cyan-300 font-mono-system text-xs uppercase font-bold flex items-center gap-2 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            <span>INSTALL TO HOME SCREEN</span>
-          </button>
-          <span className="text-xs text-slate-500 font-mono-system">
-            Standalone Mode • Service Worker Active
-          </span>
-        </div>
-      </section>
-
-      {/* 4. Demo Mode Reset Control */}
-      <section className="bg-[#080d1a] border border-slate-900 rounded-sm p-5 system-bracket">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-mono-system font-bold text-slate-300 uppercase tracking-wider">
-              DEMO MODE MANAGEMENT (SPEC #35)
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              Reset state back to the specified default: TEST SUBJECT, LV. 3, RANK E, XP 320 / 500, STREAK 7.
+      {/* TAB 3: PREFERENCES & SYSTEM */}
+      {activeTab === 'preferences' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* PWA App Shell Deployment */}
+          <section className="bg-[#080d1a] border border-cyan-950/80 rounded-sm p-4 system-bracket">
+            <div className="flex items-center gap-2 mb-2">
+              <Download className="w-4 h-4 text-cyan-400" />
+              <h3 className="text-xs font-mono-system font-bold text-slate-200 uppercase tracking-wider">
+                PROGRESSIVE WEB APP (PWA)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+              ติดตั้งแอปไปยังหน้าจอหลักเพื่อใช้งานแบบ Fullscreen Standalone เสมือนแอปมือถือแท้
             </p>
-          </div>
-          <button
-            onClick={() => {
-              playUiClick();
-              onResetDemo();
-            }}
-            className="px-4 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 font-mono-system text-xs uppercase flex items-center gap-2 transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-            <span>RESET DEMO DATA</span>
-          </button>
+            <button
+              onClick={handleInstallClick}
+              className="px-3.5 py-2 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-400/50 text-cyan-300 font-mono-system text-xs uppercase font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>INSTALL TO HOME SCREEN</span>
+            </button>
+          </section>
+
+          {/* Reset Demo Data */}
+          <section className="bg-[#080d1a] border border-slate-900 rounded-sm p-4 system-bracket">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-mono-system font-bold text-slate-300 uppercase tracking-wider">
+                  RESET DATA TO DEFAULT
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  รีเซ็ตข้อมูลตัวละครเป็น LV. 3, Rank E, XP 320/500
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  playUiClick();
+                  onResetDemo();
+                }}
+                className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 font-mono-system text-xs uppercase flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3 h-3 text-cyan-400" />
+                <span>RESET DEMO</span>
+              </button>
+            </div>
+          </section>
         </div>
-      </section>
+      )}
     </div>
   );
 }
