@@ -17,8 +17,16 @@ import { ConfirmationModal, LevelUpModal } from './components/SystemEventModal.t
 import { playQuestComplete, playLevelUpSound, playWarningSound, triggerHaptic } from './utils/audio.ts';
 import { registerServiceWorker } from './utils/pwa.ts';
 
+const VALID_TABS: NavTab[] = ['home', 'quest', 'status', 'history', 'settings'];
+
+function getInitialTab(): NavTab {
+  if (typeof window === 'undefined') return 'home';
+  const param = new URLSearchParams(window.location.search).get('tab');
+  return VALID_TABS.includes(param as NavTab) ? (param as NavTab) : 'home';
+}
+
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<NavTab>('home');
+  const [currentTab, setCurrentTab] = useState<NavTab>(getInitialTab);
   const [player, setPlayer] = useState<Player>(DEMO_PLAYER_STATE);
   const [quest, setQuest] = useState<Quest>({
     id: 'quest-today-1',
