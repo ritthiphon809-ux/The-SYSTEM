@@ -120,7 +120,14 @@ export default function App() {
         displayName: lineName || 'HUNTER',
         pictureUrl: linePic || undefined
       });
-      setIsOnboardingOpen(true);
+      // Seamless 1-click experience: Auto register & awaken player immediately with LINE profile!
+      handleCompleteOnboarding({
+        displayName: lineName || 'HUNTER',
+        fitnessGoal: 'SOLO_LEVELING',
+        lineUserId: lineUserId,
+        lineDisplayName: lineName || 'HUNTER',
+        linePictureUrl: linePic || undefined
+      });
       // Clean up URL query parameters without reloading
       window.history.replaceState({}, document.title, window.location.pathname);
     }

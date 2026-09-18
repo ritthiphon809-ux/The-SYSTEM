@@ -16,7 +16,8 @@ import {
   Copy,
   Check,
   Users,
-  Radio
+  Radio,
+  Activity
 } from 'lucide-react';
 import { playUiClick, playWarningSound, playLevelUpSound } from '../utils/audio.ts';
 import { promptPwaInstall, canInstallPwa } from '../utils/pwa.ts';

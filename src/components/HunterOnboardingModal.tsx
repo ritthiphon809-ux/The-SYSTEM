@@ -103,16 +103,16 @@ export function HunterOnboardingModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in font-mono-system">
-      <div className="w-full max-w-lg bg-[#060a14] border-2 border-cyan-500/90 rounded-sm shadow-[0_0_60px_rgba(56,189,248,0.3)] overflow-hidden system-bracket relative">
+      <div className="w-full max-w-md bg-[#060a14] border-2 border-cyan-500/90 rounded-sm shadow-[0_0_60px_rgba(56,189,248,0.3)] overflow-hidden system-bracket relative">
         {/* Top Header */}
         <div className="p-4 bg-slate-950 border-b border-cyan-950 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
             <span className="text-xs font-bold tracking-widest text-cyan-300 uppercase">
-              THE SYSTEM // AWAKENING PROTOCOL
+              THE SYSTEM // AWAKENING
             </span>
           </div>
-          <span className="text-[10px] text-slate-500">INITIATION ID: {lineUserId ? lineUserId.slice(0, 8) : 'ANONYMOUS'}</span>
+          <span className="text-[10px] text-emerald-400 font-bold">[1-CLICK LINE LOGIN]</span>
         </div>
 
         {/* Content Stages */}
@@ -128,48 +128,55 @@ export function HunterOnboardingModal({
                   [SYSTEM DIRECTIVE: RE-AWAKENING DETECTED]
                 </div>
                 <h2 className="text-xl font-sans font-black text-white tracking-wide">
-                  ยินดีต้อนรับสู่ THE SYSTEM
+                  เข้าสู่ระบบด้วย LINE ครั้งเดียวจบ
                 </h2>
-                <p className="text-xs text-slate-300 leading-relaxed font-sans max-w-md mx-auto">
-                  คุณได้รับคัดเลือกให้เป็น <strong>ผู้เล่น (Player)</strong> ภายใต้ระบบฝึกฝนการยกระดับสมรรถภาพร่างกาย
-                  โปรดเชื่อมต่อบัญชี LINE เพื่อรับการแจ้งเตือนเควสต์ประจำวัน และลงทะเบียนโปรไฟล์ฮันเตอร์
+                <p className="text-xs text-slate-300 leading-relaxed font-sans max-w-sm mx-auto">
+                  กดปุ่มด้านล่างเพื่อล็อกอินผ่าน LINE และเพิ่ม Official Account เป็นเพื่อนอัตโนมัติ
+                  ระบบจะสร้างโปรไฟล์ Hunter และเริ่มเควสต์ทันที ไม่ต้องกรอกแบบฟอร์ม
                 </p>
               </div>
 
-              <div className="p-4 bg-slate-950/90 border border-cyan-950 rounded-sm text-left space-y-2">
-                <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
-                  ทำไมต้องเชื่อมต่อ LINE และแอด OFFICIAL ACCOUNT?
-                </div>
-                <ul className="text-xs text-slate-300 space-y-1.5 font-sans">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>07:00 น.</strong> ระบบส่ง Daily Quest ตรงเข้าแชท LINE ส่วนตัว</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>08:00 น.</strong> รายงานความพร้อมและสุขภาพร่างกายประจำวัน (Health Briefing)</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>20:00 น.</strong> ระบบแจ้งเตือนเส้นตายก่อนถูกปรับเข้า Penalty Zone</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>สามารถพิมพ์คำสั่งใน LINE เพื่ออัปเดตหรือสำเร็จภารกิจได้ทันที</span>
-                  </li>
-                </ul>
+              {/* Instant 1-Click LINE Login Button */}
+              <div className="space-y-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleStartLineLogin}
+                  disabled={isLoadingAuth}
+                  className="w-full py-4 px-4 rounded bg-[#06C755] hover:bg-[#05b34c] text-white font-black text-sm tracking-wider flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(6,199,85,0.4)] active:scale-98 disabled:opacity-50"
+                >
+                  <MessageSquare className="w-5 h-5 fill-white shrink-0" />
+                  <span>
+                    {isLoadingAuth ? 'กำลังเชื่อมต่อ LINE...' : 'เข้าสู่ระบบด้วย LINE (จบใน 1 คลิก)'}
+                  </span>
+                </button>
+
+                {/* Instant Skip / Demo Play */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    playUiClick();
+                    onCompleteOnboarding({
+                      displayName: 'HUNTER',
+                      fitnessGoal: 'SOLO_LEVELING'
+                    });
+                  }}
+                  className="w-full py-2.5 text-slate-400 hover:text-cyan-300 text-xs transition-colors"
+                >
+                  ทดลองใช้งานระบบก่อน (Skip / Test Mode)
+                </button>
               </div>
 
-              <button
-                onClick={() => {
-                  playUiClick();
-                  setStep('LINE_CONNECT');
-                }}
-                className="w-full py-3.5 rounded bg-cyan-500 hover:bg-cyan-400 text-black font-black text-xs tracking-wider flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(56,189,248,0.4)] transition-all active:scale-98"
-              >
-                <span>เริ่มการเชื่อมต่อระบบ (INITIATE CONNECTION)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="p-3 bg-slate-950/90 border border-slate-900 rounded-sm text-left space-y-1.5 text-[11px] text-slate-400 font-sans">
+                <div className="text-slate-300 font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>สิ่งที่ระบบทำให้อัตโนมัติหลังล็อกอิน:</span>
+                </div>
+                <div className="pl-5 text-slate-400 space-y-1">
+                  • ดึงชื่อและรูปโปรไฟล์จาก LINE มาเป็น Hunter ID<br />
+                  • เพิ่ม THE SYSTEM Official Account เป็นเพื่อนอัตโนมัติ<br />
+                  • เริ่มรับเควสต์ 07:00 และรายงานสุขภาพ 08:00 ทันที
+                </div>
+              </div>
             </div>
           )}
 
