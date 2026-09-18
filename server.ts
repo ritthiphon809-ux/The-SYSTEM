@@ -19,7 +19,8 @@ import {
 import {
   generateDailyQuestWithAI,
   processNaturalLanguageWithAI,
-  generateDailyHealthBriefing
+  generateDailyHealthBriefing,
+  analyzeExcuseWithAI
 } from './server/gemini-service.ts';
 import {
   verifyLineSignature,
@@ -31,8 +32,11 @@ import {
   createWeeklySummaryFlexMessage,
   WeeklySummaryData,
   replyLineMessage,
-  sendLinePushMessage
+  sendLinePushMessage,
+  createRankUpFlexMessage,
+  createWeeklyBossClearedFlexMessage
 } from './server/line-service.ts';
+import { switchToDebuffMenuForUser, switchToNormalMenuForUser } from './server/line-richmenu.ts';
 
 dotenv.config();
 
@@ -59,6 +63,23 @@ let surveillanceTarget = {
   minute: 0,
   executed: false
 };
+// Feature 6: Daily Emergency Quest scheduler (sampled once per day, max 30%)
+let emergencyTarget = {
+  date: '',
+  scheduled: false,
+  hour: 0,
+  minute: 0,
+  executed: false
+};
+let emergencyQuest: Quest | null = null;
+
+// Feature 7: Weekly Boss Quest state
+let weeklyBossQuest: Quest | null = null;
+let weeklyBossWeek = '';
+
+// Feature 8: Reflection gate before applying the normal deadline penalty
+let awaitingReflectionFromUserId: string | null = null;
+let awaitingReflectionQuestId: string | null = null;
 
 // Helper: Calculate remaining minutes until deadline in Thailand Time (UTC+7)
 function getRemainingMinutesToDeadline(deadlineStr: string, bangkokNow: Date): number {
@@ -83,6 +104,47 @@ function getWeekIdentifier(date: Date): string {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   return `${d.getUTCFullYear()}-W${weekNo}`;
+}
+
+function formatBangkokTime(date: Date): string {
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function buildQuestFromGenerated(
+  generated: Awaited<ReturnType<typeof generateDailyQuestWithAI>>,
+  options: {
+    idPrefix: string;
+    deadline: string;
+    xpMultiplier?: number;
+    type?: Quest['type'];
+    difficulty?: Quest['difficulty'];
+    isEmergency?: boolean;
+    isWeeklyBoss?: boolean;
+  }
+): Quest {
+  const multiplier = options.xpMultiplier ?? 1;
+  return {
+    id: `${options.idPrefix}-${Date.now()}`,
+    title: generated.title,
+    description: generated.description,
+    type: options.type || generated.type,
+    difficulty: options.difficulty || generated.difficulty,
+    target: generated.target,
+    unit: generated.unit,
+    xpReward: Math.round(generated.suggestedXp * multiplier),
+    statRewards: { [generated.primaryStat]: 1 },
+    deadline: options.deadline,
+    status: 'AVAILABLE',
+    createdAt: new Date().toISOString(),
+    steps: generated.steps,
+    isEmergency: options.isEmergency,
+    isWeeklyBoss: options.isWeeklyBoss
+  };
 }
 let currentPlayer: Player = { ...DEMO_PLAYER_STATE };
 let currentQuest: Quest = {
@@ -247,6 +309,9 @@ async function startServer() {
       streak: 0,
       totalQuestCompleted: 0,
       totalWorkoutMinutes: 0,
+      weeklyBossesCleared: 0,
+      titles: [],
+      badges: [],
       createdAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString()
     };
@@ -592,6 +657,206 @@ async function startServer() {
     ];
 
     pendingReminders.length = 0;
+    emergencyQuest = null;
+    weeklyBossQuest = null;
+    weeklyBossWeek = '';
+    awaitingReflectionFromUserId = null;
+    awaitingReflectionQuestId = null;
+  };
+
+  // Shared completion finalizer so every real completion path gets identical
+  // event logging, debuff cleanup, and immediate dramatic rank-up delivery.
+  const finalizeQuestCompletion = async (quest: Quest, source: WorkoutLog['source'], userId?: string) => {
+    const result = processQuestCompletion(currentPlayer, quest);
+    currentPlayer = result.player;
+
+    workoutLogs.unshift({
+      id: `wk-${source.toLowerCase()}-${Date.now()}`,
+      title: `${quest.title} (${quest.target} ${quest.unit})`,
+      durationMinutes: source === 'WEB' ? (quest.type === 'VITALITY' ? 25 : 15) : 20,
+      xpEarned: quest.xpReward,
+      statsEarned: quest.statRewards,
+      date: new Date().toISOString(),
+      source
+    });
+
+    for (const evt of result.systemEvents) {
+      eventLogs.unshift(evt);
+    }
+
+    const targetUserIds = userId
+      ? [userId]
+      : currentPlayer.lineUserId
+        ? [currentPlayer.lineUserId]
+        : Array.from(connectedLineUserIds);
+
+    // Completing a normal quest clears an active debuff and restores the normal menu.
+    if (!currentPlayer.activeDebuff) {
+      for (const uid of targetUserIds) {
+        await switchToNormalMenuForUser(uid);
+      }
+    }
+
+    if (result.rankUp) {
+      const rankFlex = createRankUpFlexMessage(result.newRank, currentPlayer);
+      for (const uid of targetUserIds) {
+        if (uid && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+          await sendLinePushMessage(uid, [rankFlex]);
+        }
+      }
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-rank-up-dramatic`,
+        type: 'RANK_UP_DRAMATIC',
+        title: `[RANK UP] ${result.oldRank} → ${result.newRank}`,
+        description: `Dramatic rank-up announcement dispatched immediately after quest completion.`,
+        timestamp: new Date().toISOString(),
+        rankChange: { from: result.oldRank, to: result.newRank }
+      });
+    }
+
+    return result;
+  };
+
+  const pushToConnectedUsers = async (messages: any[], targetUserId?: string) => {
+    const targets = targetUserId ? [targetUserId] : Array.from(connectedLineUserIds);
+    if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) return;
+    for (const uid of targets) {
+      await sendLinePushMessage(uid, messages);
+    }
+  };
+
+  const completeSpecialQuest = async (quest: Quest, kind: 'EMERGENCY' | 'BOSS', userId?: string) => {
+    if (quest.status === 'COMPLETED') return null;
+    quest.status = 'COMPLETED';
+    quest.completedAt = new Date().toISOString();
+    if (quest.steps) {
+      quest.steps = quest.steps.map((step) => ({ ...step, completed: true }));
+    }
+
+    const result = await finalizeQuestCompletion(quest, 'LINE', userId);
+
+    if (kind === 'EMERGENCY') {
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-emergency-complete`,
+        type: 'EMERGENCY_QUEST_COMPLETED',
+        title: '[EMERGENCY QUEST COMPLETED]',
+        description: `Emergency protocol '${quest.title}' completed within the 1-hour window.`,
+        timestamp: new Date().toISOString()
+      });
+      emergencyQuest = null;
+    } else {
+      currentPlayer.weeklyBossesCleared = (currentPlayer.weeklyBossesCleared || 0) + 1;
+      currentPlayer.titles = Array.from(new Set([...(currentPlayer.titles || []), 'WEEKLY BOSS VANQUISHER']));
+      currentPlayer.badges = Array.from(new Set([...(currentPlayer.badges || []), 'WEEKLY_BOSS_VANQUISHER']));
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-boss-complete`,
+        type: 'BOSS_QUEST_COMPLETED',
+        title: '[WEEKLY BOSS VANQUISHED]',
+        description: `Weekly Boss cleared. Total Bosses Cleared: ${currentPlayer.weeklyBossesCleared}.`,
+        timestamp: new Date().toISOString()
+      });
+      const bossFlex = createWeeklyBossClearedFlexMessage(quest, currentPlayer);
+      const targets = userId
+        ? [userId]
+        : currentPlayer.lineUserId
+          ? [currentPlayer.lineUserId]
+          : Array.from(connectedLineUserIds);
+      for (const uid of targets) {
+        if (uid && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+          await sendLinePushMessage(uid, [bossFlex]);
+        }
+      }
+      weeklyBossQuest = null;
+    }
+
+    return result;
+  };
+
+  const applyDeadlinePenalty = async (targetUserId?: string) => {
+    currentQuest.status = 'EXPIRED';
+    currentPlayer.missedDeadlineStreak = (currentPlayer.missedDeadlineStreak || 0) + 1;
+
+    currentPlayer.activeDebuff = {
+      name: 'SYSTEM PENALTY: Weakened',
+      description: 'XP ที่ได้รับลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ',
+      appliedAt: new Date().toISOString(),
+      xpMultiplier: 0.5
+    };
+
+    const rankOrder: Rank[] = ['E', 'D', 'C', 'B', 'A', 'S'];
+    let demoted = false;
+    const oldRank = currentPlayer.rank;
+    if (currentPlayer.missedDeadlineStreak >= 3) {
+      const currentIdx = rankOrder.indexOf(currentPlayer.rank);
+      if (currentIdx > 0) {
+        currentPlayer.rank = rankOrder[currentIdx - 1];
+        demoted = true;
+      }
+      currentPlayer.missedDeadlineStreak = 0;
+    }
+
+    eventLogs.unshift({
+      id: `evt-${Date.now()}-penalty-applied`,
+      type: 'DEBUFF_APPLIED',
+      title: '[SYSTEM PENALTY: WEAKENED DEBUFF]',
+      description: `Missed quest deadline for ${currentQuest.title}. Weakened debuff activated (XP ×0.5). Missed streak: ${currentPlayer.missedDeadlineStreak}/3.`,
+      timestamp: new Date().toISOString()
+    });
+
+    if (demoted) {
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-rank-down`,
+        type: 'RANK_DOWN',
+        title: `[RANK DEMOTION: RANK ${oldRank} → ${currentPlayer.rank}]`,
+        description: 'Disciplinary demotion: Missed quest deadline for 3 consecutive days. Rank downgraded.',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const penaltyPushText = demoted
+      ? `[SYSTEM PENALTY ENFORCED]\nคุณพลาด Deadline การปฏิบัติภารกิจ (${currentQuest.title})\nบทลงโทษถูกเปิดใช้งาน: ได้รับ Debuff 'Weakened' (XP ที่ได้รับจะลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ)\n\n[RANK DEMOTION]\nเนื่องจากคุณพลาดภารกิจติดต่อกันครบ 3 วัน ระบบได้ลดระดับของคุณลงจาก RANK ${oldRank} สู่ RANK ${currentPlayer.rank}`
+      : `[SYSTEM PENALTY ENFORCED]\nคุณพลาด Deadline การปฏิบัติภารกิจ (${currentQuest.title})\nบทลงโทษถูกเปิดใช้งาน: ได้รับ Debuff 'Weakened' (XP ที่ได้รับจะลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ)`;
+
+    const targetIds = targetUserId
+      ? [targetUserId]
+      : currentPlayer.lineUserId
+        ? [currentPlayer.lineUserId]
+        : Array.from(connectedLineUserIds);
+    for (const uid of targetIds) {
+      await switchToDebuffMenuForUser(uid, process.env.APP_URL || 'http://localhost:3000');
+      if (process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+        await sendLinePushMessage(uid, [{ type: 'text', text: penaltyPushText }]);
+      }
+    }
+
+    return { demoted, oldRank, newRank: currentPlayer.rank, message: penaltyPushText };
+  };
+
+  const buildCompletionChoiceMessage = () => {
+    const items: any[] = [];
+    if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'EXPIRED' && currentQuest.status !== 'RESTED') {
+      items.push({
+        type: 'action',
+        action: { type: 'message', label: 'เควสปกติ', text: 'เสร็จแล้ว: ปกติ' }
+      });
+    }
+    if (emergencyQuest && emergencyQuest.status !== 'COMPLETED' && emergencyQuest.status !== 'EXPIRED') {
+      items.push({
+        type: 'action',
+        action: { type: 'message', label: 'เควสฉุกเฉิน', text: 'เสร็จแล้ว: ฉุกเฉิน' }
+      });
+    }
+    if (weeklyBossQuest && weeklyBossQuest.status !== 'COMPLETED' && weeklyBossQuest.status !== 'EXPIRED') {
+      items.push({
+        type: 'action',
+        action: { type: 'message', label: 'WEEKLY BOSS', text: 'เสร็จแล้ว: BOSS' }
+      });
+    }
+    return {
+      type: 'text',
+      text: '[SYSTEM]\nตรวจพบภารกิจที่สามารถบันทึกผลสำเร็จได้มากกว่าหนึ่งรายการ กรุณาเลือกภารกิจที่คุณทำเสร็จแล้ว',
+      quickReply: { items }
+    };
   };
 
   app.post('/api/player/reset-demo', (req, res) => {
@@ -623,6 +888,15 @@ async function startServer() {
   // 4. Get Current Daily Quest
   app.get('/api/quest/daily', async (_req, res) => {
     res.json({ quest: currentQuest });
+  });
+
+  // Feature 6/7: Special quest state endpoints (read-only; do not replace the daily quest).
+  app.get('/api/quest/emergency', (_req, res) => {
+    res.json({ quest: emergencyQuest });
+  });
+
+  app.get('/api/quest/weekly-boss', (_req, res) => {
+    res.json({ quest: weeklyBossQuest });
   });
 
   // 5. Generate / Adapt Quest via Gemini AI
@@ -703,24 +977,7 @@ async function startServer() {
       currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
     }
 
-    const result = processQuestCompletion(currentPlayer, currentQuest);
-    currentPlayer = result.player;
-
-    // Log all system events
-    for (const evt of result.systemEvents) {
-      eventLogs.unshift(evt);
-    }
-
-    // Log workout session
-    workoutLogs.unshift({
-      id: `wk-${Date.now()}`,
-      title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
-      durationMinutes: currentQuest.type === 'VITALITY' ? 25 : 15,
-      xpEarned: currentQuest.xpReward,
-      statsEarned: currentQuest.statRewards,
-      date: new Date().toISOString(),
-      source: 'WEB'
-    });
+    const result = await finalizeQuestCompletion(currentQuest, 'WEB', currentPlayer.lineUserId);
 
     res.json({
       success: true,
@@ -927,6 +1184,22 @@ async function startServer() {
     });
   });
 
+  // 11b. Per-user Rich Menu switching (normal/debuff)
+  app.post('/api/line/richmenu/switch-debuff/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    if (!userId) return res.status(400).json({ success: false, error: 'userId is required' });
+    const success = await switchToDebuffMenuForUser(userId, appUrl);
+    res.status(success ? 200 : 500).json({ success, userId, mode: 'debuff' });
+  });
+
+  app.post('/api/line/richmenu/switch-normal/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    if (!userId) return res.status(400).json({ success: false, error: 'userId is required' });
+    const success = await switchToNormalMenuForUser(userId);
+    res.status(success ? 200 : 500).json({ success, userId, mode: 'normal' });
+  });
+
   // 12. Push Quest to Connected LINE Accounts (or test user)
   app.post('/api/line/push-quest', async (req, res) => {
     const appUrl = process.env.APP_URL || 'http://localhost:3000';
@@ -1108,6 +1381,10 @@ async function startServer() {
       const userId = event.source?.userId;
       if (userId) {
         connectedLineUserIds.add(userId);
+        if (!currentPlayer.lineUserId) {
+          currentPlayer.lineUserId = userId;
+          currentPlayer.isLineConnected = true;
+        }
       }
 
       const replyToken = event.replyToken;
@@ -1136,8 +1413,100 @@ async function startServer() {
         const text = event.message.text.trim();
         const lower = text.toLowerCase();
 
+        // Feature 8: Reflection gate. The user's first reply after a missed deadline
+        // is treated as the requested explanation and evaluated by Gemini.
+        if (awaitingReflectionFromUserId === userId && awaitingReflectionQuestId === currentQuest.id) {
+          const reflectionUserId = userId || currentPlayer.lineUserId;
+          try {
+            const analysis = await analyzeExcuseWithAI(text);
+            awaitingReflectionFromUserId = null;
+            awaitingReflectionQuestId = null;
+
+            eventLogs.unshift({
+              id: `evt-${Date.now()}-reflection`,
+              type: 'REFLECTION_EVALUATED',
+              title: `[REFLECTION] ${analysis.validExcuse ? 'EXCUSE ACCEPTED' : 'EXCUSE REJECTED'}`,
+              description: analysis.systemResponse,
+              timestamp: new Date().toISOString()
+            });
+
+            if (analysis.validExcuse) {
+              currentQuest.status = 'EXPIRED';
+              eventLogs.unshift({
+                id: `evt-${Date.now()}-reflection-valid`,
+                type: 'QUEST_EXPIRED',
+                title: '[SYSTEM] PENALTY EXEMPTION GRANTED',
+                description: 'Deadline miss was accepted as a serious illness, injury, or force-majeure event. No debuff or demotion applied.',
+                timestamp: new Date().toISOString()
+              });
+              if (replyToken) {
+                await replyLineMessage(replyToken, [{
+                  type: 'text',
+                  text: `${analysis.systemResponse}\n\n[SYSTEM] Debuff และการลด Rank จะไม่ถูกนำมาใช้ในครั้งนี้`
+                }]);
+              }
+            } else {
+              const penalty = await applyDeadlinePenalty(reflectionUserId || undefined);
+              if (replyToken) {
+                await replyLineMessage(replyToken, [{
+                  type: 'text',
+                  text: `${analysis.systemResponse}\n\n${penalty.message}`
+                }]);
+              }
+            }
+          } catch (error: any) {
+            awaitingReflectionFromUserId = null;
+            awaitingReflectionQuestId = null;
+            console.error('[THE SYSTEM] Reflection processing failed:', error?.message || error);
+            if (replyToken) {
+              await replyLineMessage(replyToken, [{
+                type: 'text',
+                text: '[SYSTEM] ไม่สามารถประมวลผลเหตุผลได้ในขณะนี้ ระบบจะยังไม่ลงโทษจนกว่าจะสามารถตรวจสอบเหตุผลได้อีกครั้ง'
+              }]);
+            }
+          }
+        }
+        // Feature 1/7: Explicit completion target selection for overlapping quests.
+        else if (lower === 'เสร็จแล้ว: ฉุกเฉิน' || lower === 'complete emergency' || lower === 'emergency complete') {
+          if (emergencyQuest && emergencyQuest.status !== 'COMPLETED' && emergencyQuest.status !== 'EXPIRED') {
+            const quest = emergencyQuest;
+            const result = await completeSpecialQuest(quest, 'EMERGENCY', userId);
+            if (replyToken) {
+              await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+            }
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ไม่พบ Emergency Quest ที่ยัง active อยู่' }]);
+          }
+        }
+        else if (lower === 'เสร็จแล้ว: boss' || lower === 'complete boss' || lower === 'boss complete') {
+          if (weeklyBossQuest && weeklyBossQuest.status !== 'COMPLETED' && weeklyBossQuest.status !== 'EXPIRED') {
+            const quest = weeklyBossQuest;
+            const result = await completeSpecialQuest(quest, 'BOSS', userId);
+            if (replyToken) {
+              await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+            }
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ไม่พบ WEEKLY BOSS ที่ยัง active อยู่' }]);
+          }
+        }
+        // Feature 1: Emergency Quest inquiry
+        if (lower === 'emergency' || lower.includes('เควสฉุกเฉิน') || lower.includes('ภารกิจฉุกเฉิน')) {
+          if (emergencyQuest && emergencyQuest.status !== 'EXPIRED' && emergencyQuest.status !== 'COMPLETED') {
+            if (replyToken) await replyLineMessage(replyToken, [createQuestFlexMessage(emergencyQuest, appUrl)]);
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ขณะนี้ไม่มี Emergency Quest ที่ active อยู่' }]);
+          }
+        }
+        // Feature 2: Weekly Boss Quest inquiry
+        else if (lower === 'boss' || lower === 'weekly boss' || lower.includes('บอสประจำสัปดาห์')) {
+          if (weeklyBossQuest && weeklyBossQuest.status !== 'EXPIRED' && weeklyBossQuest.status !== 'COMPLETED') {
+            if (replyToken) await replyLineMessage(replyToken, [createQuestFlexMessage(weeklyBossQuest, appUrl)]);
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ขณะนี้ไม่มี WEEKLY BOSS ที่ active อยู่' }]);
+          }
+        }
         // 1. Check for Quest inquiry
-        if (
+        else if (
           lower === 'quest' ||
           lower.includes('เควสต์') ||
           lower.includes('ภารกิจ') ||
@@ -1186,33 +1555,33 @@ async function startServer() {
           lower === 'สำเร็จ' ||
           lower === 'ทำเสร็จแล้ว'
         ) {
-          if (currentQuest.status !== 'COMPLETED') {
+          const hasActiveEmergency = Boolean(emergencyQuest && emergencyQuest.status !== 'COMPLETED' && emergencyQuest.status !== 'EXPIRED');
+          const hasActiveBoss = Boolean(weeklyBossQuest && weeklyBossQuest.status !== 'COMPLETED' && weeklyBossQuest.status !== 'EXPIRED');
+          const dailyIsCompletable = currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'EXPIRED' && currentQuest.status !== 'RESTED';
+
+          if ((hasActiveEmergency || hasActiveBoss) && dailyIsCompletable) {
+            if (replyToken) await replyLineMessage(replyToken, [buildCompletionChoiceMessage()]);
+          } else if (hasActiveEmergency && !dailyIsCompletable && !hasActiveBoss) {
+            const quest = emergencyQuest!;
+            await completeSpecialQuest(quest, 'EMERGENCY', userId);
+            if (replyToken) await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+          } else if (hasActiveBoss && !dailyIsCompletable && !hasActiveEmergency) {
+            const quest = weeklyBossQuest!;
+            await completeSpecialQuest(quest, 'BOSS', userId);
+            if (replyToken) await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+          } else if (dailyIsCompletable) {
             currentQuest.status = 'COMPLETED';
             currentQuest.completedAt = new Date().toISOString();
             if (currentQuest.steps) {
               currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
             }
-            const result = processQuestCompletion(currentPlayer, currentQuest);
-            currentPlayer = result.player;
-
-            workoutLogs.unshift({
-              id: `wk-line-${Date.now()}`,
-              title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
-              durationMinutes: 20,
-              xpEarned: currentQuest.xpReward,
-              statsEarned: currentQuest.statRewards,
-              date: new Date().toISOString(),
-              source: 'LINE'
-            });
-
-            for (const evt of result.systemEvents) {
-              eventLogs.unshift(evt);
+            await finalizeQuestCompletion(currentQuest, 'LINE', userId);
+            if (replyToken) {
+              await replyLineMessage(replyToken, [createCompletionFlexMessage(currentQuest, currentPlayer)]);
             }
-          }
-
-          const compFlex = createCompletionFlexMessage(currentQuest, currentPlayer);
-          if (replyToken) {
-            await replyLineMessage(replyToken, [compFlex]);
+          } else if (replyToken) {
+            // Preserve the previous behavior when the daily quest is already completed/rested/expired.
+            await replyLineMessage(replyToken, [createCompletionFlexMessage(currentQuest, currentPlayer)]);
           }
         }
         // 5. Rest Day Protocol ("ขอพัก" / "rest day" - Feature 4)
@@ -1255,22 +1624,7 @@ async function startServer() {
             if (currentQuest.steps) {
               currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
             }
-            const result = processQuestCompletion(currentPlayer, currentQuest);
-            currentPlayer = result.player;
-
-            workoutLogs.unshift({
-              id: `wk-surv-${Date.now()}`,
-              title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
-              durationMinutes: 20,
-              xpEarned: currentQuest.xpReward,
-              statsEarned: currentQuest.statRewards,
-              date: new Date().toISOString(),
-              source: 'LINE'
-            });
-
-            for (const evt of result.systemEvents) {
-              eventLogs.unshift(evt);
-            }
+            const result = await finalizeQuestCompletion(currentQuest, 'LINE', userId);
             replyText += `\n✓ ยืนยันการบรรลุเป้าหมาย! ได้รับ +${result.xpGained} XP`;
             if (result.levelUp) replyText += `\n★ LEVEL UP! [LV. ${result.newLevel}]`;
           } else {
@@ -1378,33 +1732,34 @@ async function startServer() {
       } else if (event.type === 'postback') {
         const data = event.postback?.data || '';
         if (data.includes('action=complete')) {
-          if (currentQuest.status !== 'COMPLETED') {
+          const hasActiveEmergency = Boolean(emergencyQuest && emergencyQuest.status !== 'COMPLETED' && emergencyQuest.status !== 'EXPIRED');
+          const hasActiveBoss = Boolean(weeklyBossQuest && weeklyBossQuest.status !== 'COMPLETED' && weeklyBossQuest.status !== 'EXPIRED');
+          const dailyIsCompletable = currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'EXPIRED' && currentQuest.status !== 'RESTED';
+
+          if ((hasActiveEmergency || hasActiveBoss) && dailyIsCompletable) {
+            if (replyToken) await replyLineMessage(replyToken, [buildCompletionChoiceMessage()]);
+          } else if (hasActiveEmergency && !dailyIsCompletable && !hasActiveBoss) {
+            const quest = emergencyQuest!;
+            await completeSpecialQuest(quest, 'EMERGENCY', userId);
+            if (replyToken) await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+          } else if (hasActiveBoss && !dailyIsCompletable && !hasActiveEmergency) {
+            const quest = weeklyBossQuest!;
+            await completeSpecialQuest(quest, 'BOSS', userId);
+            if (replyToken) await replyLineMessage(replyToken, [createCompletionFlexMessage(quest, currentPlayer)]);
+          } else if (dailyIsCompletable) {
             currentQuest.status = 'COMPLETED';
             currentQuest.completedAt = new Date().toISOString();
             if (currentQuest.steps) {
               currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
             }
-            const result = processQuestCompletion(currentPlayer, currentQuest);
-            currentPlayer = result.player;
+            await finalizeQuestCompletion(currentQuest, 'LINE', userId);
 
-            workoutLogs.unshift({
-              id: `wk-line-pb-${Date.now()}`,
-              title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
-              durationMinutes: 20,
-              xpEarned: currentQuest.xpReward,
-              statsEarned: currentQuest.statRewards,
-              date: new Date().toISOString(),
-              source: 'LINE'
-            });
-
-            for (const evt of result.systemEvents) {
-              eventLogs.unshift(evt);
+            if (replyToken) {
+              const compFlex = createCompletionFlexMessage(currentQuest, currentPlayer);
+              await replyLineMessage(replyToken, [compFlex]);
             }
-          }
-
-          if (replyToken) {
-            const compFlex = createCompletionFlexMessage(currentQuest, currentPlayer);
-            await replyLineMessage(replyToken, [compFlex]);
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ไม่พบภารกิจที่พร้อมบันทึกผลสำเร็จในขณะนี้' }]);
           }
         }
       }
@@ -1475,6 +1830,10 @@ async function startServer() {
         appliedAt: new Date().toISOString(),
         xpMultiplier: 0.5
       };
+      await switchToDebuffMenuForUser(
+        currentPlayer.lineUserId || 'simulated-line-hunter',
+        process.env.APP_URL || 'http://localhost:3000'
+      );
 
       const rankOrder: Rank[] = ['E', 'D', 'C', 'B', 'A', 'S'];
       let demoted = false;
@@ -1550,8 +1909,7 @@ async function startServer() {
 
     if (action === 'COMPLETE_VIA_LINE') {
       currentQuest.status = 'COMPLETED';
-      const result = processQuestCompletion(currentPlayer, currentQuest);
-      currentPlayer = result.player;
+      const result = await finalizeQuestCompletion(currentQuest, 'LINE', currentPlayer.lineUserId || undefined);
 
       const flexMsg = createCompletionFlexMessage(currentQuest, currentPlayer);
       return res.json({
@@ -1609,22 +1967,7 @@ async function startServer() {
         if (currentQuest.steps) {
           currentQuest.steps = currentQuest.steps.map((s) => ({ ...s, completed: true }));
         }
-        const result = processQuestCompletion(currentPlayer, currentQuest);
-        currentPlayer = result.player;
-
-        workoutLogs.unshift({
-          id: `wk-sim-${Date.now()}`,
-          title: `${currentQuest.title} (${currentQuest.target} ${currentQuest.unit})`,
-          durationMinutes: 20,
-          xpEarned: currentQuest.xpReward,
-          statsEarned: currentQuest.statRewards,
-          date: new Date().toISOString(),
-          source: 'LINE'
-        });
-
-        for (const evt of result.systemEvents) {
-          eventLogs.unshift(evt);
-        }
+        const result = await finalizeQuestCompletion(currentQuest, 'LINE', currentPlayer.lineUserId || undefined);
         textRes += `\n✓ ยืนยันการบรรลุเป้าหมาย! ได้รับ +${result.xpGained} XP`;
         if (result.levelUp) textRes += `\n★ LEVEL UP! [LV. ${result.newLevel}]`;
       } else {
@@ -1777,6 +2120,149 @@ async function startServer() {
       const appUrl = process.env.APP_URL || 'http://localhost:3000';
       const hasLinePush = Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN && connectedLineUserIds.size > 0);
 
+      // Feature 6: Sample the Emergency Quest once at the beginning of each day.
+      // The sampled result is stored so subsequent scheduler ticks never re-roll it.
+      if (emergencyTarget.date !== todayStr) {
+        const shouldSpawn = Math.random() < 0.30;
+        const targetTotalMinutes = 9 * 60 + Math.floor(Math.random() * (9 * 60 + 1));
+        emergencyTarget = {
+          date: todayStr,
+          scheduled: shouldSpawn,
+          hour: Math.floor(targetTotalMinutes / 60),
+          minute: targetTotalMinutes % 60,
+          executed: false
+        };
+        emergencyQuest = null;
+        console.log(
+          `[THE SYSTEM] Emergency Quest roll for ${todayStr}: ${shouldSpawn ? `SCHEDULED ${emergencyTarget.hour}:${String(emergencyTarget.minute).padStart(2, '0')}` : 'NOT SCHEDULED'}`
+        );
+      }
+
+      // Feature 6: Spawn the Emergency Quest once at its sampled time (09:00-18:00).
+      if (
+        emergencyTarget.scheduled &&
+        !emergencyTarget.executed &&
+        (hours * 60 + minutes) >= (emergencyTarget.hour * 60 + emergencyTarget.minute) &&
+        hours <= 18
+      ) {
+        emergencyTarget.executed = true;
+        try {
+          const createdAt = new Date();
+          const deadlineAt = new Date(createdAt.getTime() + 60 * 60000);
+          const generated = await generateDailyQuestWithAI(currentPlayer, {
+            availableMinutes: 15,
+            preference: 'เควสฉุกเฉินความเข้มข้นสูง เวลาจำกัด'
+          });
+          emergencyQuest = buildQuestFromGenerated(generated, {
+            idPrefix: 'quest-emergency',
+            deadline: formatBangkokTime(deadlineAt),
+            xpMultiplier: 2,
+            type: 'EMERGENCY',
+            difficulty: 'ELITE',
+            isEmergency: true
+          });
+
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-emergency-created`,
+            type: 'EMERGENCY_QUEST_CREATED',
+            title: '[SYSTEM ALERT] ตรวจพบภาวะฉุกเฉิน',
+            description: `Emergency Quest created with 15-minute constraint and 1-hour deadline: ${emergencyQuest.title}`,
+            timestamp: createdAt.toISOString()
+          });
+
+          const emergencyFlex = createQuestFlexMessage(emergencyQuest, appUrl);
+          const emergencyAlert = {
+            type: 'text',
+            text: '[SYSTEM ALERT] ตรวจพบภาวะฉุกเฉิน\nระบบได้สร้าง Emergency Quest แบบเวลาจำกัดขึ้นใหม่\nภารกิจนี้มีเวลา 1 ชั่วโมงในการปฏิบัติ และให้ XP x2 จากค่าปกติ'
+          };
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [emergencyAlert, emergencyFlex]);
+            }
+          }
+        } catch (error: any) {
+          console.error('[THE SYSTEM] Failed to generate Emergency Quest:', error?.message || error);
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-emergency-error`,
+            type: 'SYSTEM_WARNING',
+            title: '[SYSTEM ALERT] Emergency Quest generation failed',
+            description: String(error?.message || error),
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // Feature 7: Weekly Boss Quest appears every Monday at 07:00 and lasts until Sunday 23:59.
+      const currentWeekId = getWeekIdentifier(bangkokTime);
+      const isMonday = bangkokTime.getDay() === 1;
+      if (isMonday && hours === 7 && minutes === 0 && weeklyBossWeek !== currentWeekId) {
+        weeklyBossWeek = currentWeekId;
+        try {
+          const generated = await generateDailyQuestWithAI(currentPlayer, {
+            availableMinutes: 45,
+            preference: 'Boss Quest รวมหลายท่าความเข้มข้นสูงสุดของสัปดาห์',
+            difficultyOverride: 'ELITE'
+          });
+          weeklyBossQuest = buildQuestFromGenerated(generated, {
+            idPrefix: 'quest-weekly-boss',
+            deadline: '23:59',
+            xpMultiplier: 3,
+            difficulty: 'ELITE',
+            isWeeklyBoss: true
+          });
+
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-boss-created`,
+            type: 'BOSS_QUEST_CREATED',
+            title: '[SYSTEM] ภารกิจประจำสัปดาห์ปรากฏขึ้น',
+            description: `Weekly Boss Quest created for ${currentWeekId}: ${weeklyBossQuest.title}`,
+            timestamp: new Date().toISOString()
+          });
+
+          const bossFlex = createQuestFlexMessage(weeklyBossQuest, appUrl);
+          const bossAlert = {
+            type: 'text',
+            text: '[SYSTEM] ภารกิจประจำสัปดาห์ปรากฏขึ้น\nWEEKLY BOSS: ภารกิจระดับ ELITE พร้อมให้พิชิตแล้ว\nกำหนดส่ง: วันอาทิตย์ 23:59 น. | XP x3'
+          };
+          if (hasLinePush) {
+            for (const uid of connectedLineUserIds) {
+              await sendLinePushMessage(uid, [bossAlert, bossFlex]);
+            }
+          }
+        } catch (error: any) {
+          console.error('[THE SYSTEM] Failed to generate Weekly Boss Quest:', error?.message || error);
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-boss-error`,
+            type: 'SYSTEM_WARNING',
+            title: '[SYSTEM] Weekly Boss generation failed',
+            description: String(error?.message || error),
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // Feature 7: Expire an uncleared Weekly Boss at Sunday 23:59 without penalty.
+      const isSundayForBoss = bangkokTime.getDay() === 0;
+      if (isSundayForBoss && hours === 23 && minutes === 59 && weeklyBossQuest && weeklyBossQuest.status !== 'COMPLETED') {
+        weeklyBossQuest.status = 'EXPIRED';
+        eventLogs.unshift({
+          id: `evt-${Date.now()}-boss-expired`,
+          type: 'QUEST_EXPIRED',
+          title: '[SYSTEM] WEEKLY BOSS OPPORTUNITY MISSED',
+          description: 'Weekly Boss expired at the end of the week. No penalty or demotion was applied.',
+          timestamp: new Date().toISOString()
+        });
+        if (hasLinePush) {
+          for (const uid of connectedLineUserIds) {
+            await sendLinePushMessage(uid, [{
+              type: 'text',
+              text: '[SYSTEM] WEEKLY BOSS หมดเวลาแล้ว\nคุณพลาดโอกาสของรอบนี้ ระบบจะไม่ลงโทษหรือหัก Rank\nภารกิจประจำสัปดาห์จะถูกเคลียร์เพื่อรอรอบใหม่'
+            }]);
+          }
+        }
+        weeklyBossQuest = null;
+      }
+
       // Feature 2: Schedule Today's Surveillance Check-in once per day (10:00 - 18:59)
       if (surveillanceTarget.date !== todayStr) {
         surveillanceTarget = {
@@ -1846,6 +2332,22 @@ async function startServer() {
         }
       }
 
+      // Feature 6: Emergency Quest expiry is isolated from the normal deadline/debuff system.
+      if (emergencyQuest && emergencyQuest.status !== 'COMPLETED' && emergencyQuest.status !== 'EXPIRED') {
+        const emergencyRemainingMinutes = getRemainingMinutesToDeadline(emergencyQuest.deadline, bangkokTime);
+        if (emergencyRemainingMinutes <= 0) {
+          emergencyQuest.status = 'EXPIRED';
+          eventLogs.unshift({
+            id: `evt-${Date.now()}-emergency-expired`,
+            type: 'QUEST_EXPIRED',
+            title: '[SYSTEM ALERT] EMERGENCY QUEST EXPIRED',
+            description: `Emergency Quest '${emergencyQuest.title}' expired after its 1-hour window. No normal deadline miss, debuff, or demotion was applied.`,
+            timestamp: new Date().toISOString()
+          });
+          emergencyQuest = null;
+        }
+      }
+
       // Feature 1: Escalating Reminders
       const remainingMinutes = getRemainingMinutesToDeadline(currentQuest.deadline, bangkokTime);
 
@@ -1900,7 +2402,7 @@ async function startServer() {
           console.log(`[THE SYSTEM] 30 Minutes Remaining Checkpoint Triggered for ${connectedLineUserIds.size} hunters`);
           const thirtyMinMsg = {
             type: 'text',
-            text: `[SYSTEM CRITICAL: 30 MINUTES TO PENALTY]\nคำเตือนขั้นวิกฤต: เหลือเวลาอีกเพียง 30 นาที ภารกิจ '${currentQuest.title}' จะหมดอายุ!\nหากไม่สำเร็จภายใน ${currentQuest.deadline} น. ระบบจะบังคับใช้ Debuff 'Weakened' (XP ลด 50%) และบันทึกโทษทัณฑ์ทันที จงทำภารกิจให้เสร็จสิ้นเดี๋ยวนี้!`
+            text: `[SYSTEM CRITICAL: 30 MINUTES TO PENALTY]\nคำเตือนขั้นวิกฤต: เหลือเวลาอีกเพียง 30 นาที ภารกิจ '${currentQuest.title}' จะหมดอายุ!\nหากไม่สำเร็จภายใน ${currentQuest.deadline} น. ระบบจะเรียก Reflection ก่อนพิจารณา Debuff/Demotion จงทำภารกิจให้เสร็จสิ้นเดี๋ยวนี้!`
           };
           if (hasLinePush) {
             for (const uid of connectedLineUserIds) {
@@ -1917,60 +2419,32 @@ async function startServer() {
         }
       }
 
-      // Feature 3: Post-Deadline Check & Debuff Enforcement
+      // Feature 3 + 8: Post-Deadline Check. Ask for a reflection before applying
+      // the existing debuff/demotion rules. The penalty is applied only after Gemini evaluates the reason.
       if (remainingMinutes <= 0 && lastPushDatePenalty !== todayStr) {
         lastPushDatePenalty = todayStr;
         if (currentQuest.status !== 'COMPLETED' && currentQuest.status !== 'RESTED') {
-          console.log(`[THE SYSTEM] Deadline passed! Enforcing System Debuff & Penalty...`);
-          currentQuest.status = 'EXPIRED';
-          currentPlayer.missedDeadlineStreak = (currentPlayer.missedDeadlineStreak || 0) + 1;
+          const reflectionTarget = currentPlayer.lineUserId || Array.from(connectedLineUserIds)[0] || null;
+          if (reflectionTarget && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+            awaitingReflectionFromUserId = reflectionTarget;
+            awaitingReflectionQuestId = currentQuest.id;
+            console.log(`[THE SYSTEM] Deadline passed. Reflection requested from LINE user ${reflectionTarget}.`);
 
-          currentPlayer.activeDebuff = {
-            name: 'SYSTEM PENALTY: Weakened',
-            description: 'XP ที่ได้รับลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ',
-            appliedAt: new Date().toISOString(),
-            xpMultiplier: 0.5
-          };
-
-          const rankOrder: Rank[] = ['E', 'D', 'C', 'B', 'A', 'S'];
-          let demoted = false;
-          const oldRank = currentPlayer.rank;
-          if (currentPlayer.missedDeadlineStreak >= 3) {
-            const currentIdx = rankOrder.indexOf(currentPlayer.rank);
-            if (currentIdx > 0) {
-              currentPlayer.rank = rankOrder[currentIdx - 1];
-              demoted = true;
-            }
-            currentPlayer.missedDeadlineStreak = 0;
-          }
-
-          eventLogs.unshift({
-            id: `evt-${Date.now()}-penalty-applied`,
-            type: 'DEBUFF_APPLIED',
-            title: '[SYSTEM PENALTY: WEAKENED DEBUFF]',
-            description: `Missed quest deadline for ${currentQuest.title}. Weakened debuff activated (XP ×0.5). Missed streak: ${currentPlayer.missedDeadlineStreak}/3.`,
-            timestamp: new Date().toISOString()
-          });
-
-          if (demoted) {
+            const reflectionMessage = {
+              type: 'text',
+              text: '[SYSTEM] ตรวจพบการไม่ปฏิบัติตามคำสั่ง เหตุใดจึงไม่ดำเนินการ'
+            };
+            await sendLinePushMessage(reflectionTarget, [reflectionMessage]);
             eventLogs.unshift({
-              id: `evt-${Date.now()}-rank-down`,
-              type: 'RANK_DOWN',
-              title: `[RANK DEMOTION: RANK ${oldRank} → ${currentPlayer.rank}]`,
-              description: `Disciplinary demotion: Missed quest deadline for 3 consecutive days. Rank downgraded.`,
+              id: `evt-${Date.now()}-reflection-request`,
+              type: 'SYSTEM_WARNING',
+              title: '[SYSTEM] REFLECTION REQUESTED',
+              description: `Deadline passed for '${currentQuest.title}'. Penalty is paused pending player reflection.`,
               timestamp: new Date().toISOString()
             });
-          }
-
-          let penaltyPushText = `[SYSTEM PENALTY ENFORCED]\nคุณพลาด Deadline การปฏิบัติภารกิจ (${currentQuest.title})\nบทลงโทษถูกเปิดใช้งาน: ได้รับ Debuff 'Weakened' (XP ที่ได้รับจะลดลง 50% จนกว่าจะทำเควสถัดไปสำเร็จ)`;
-          if (demoted) {
-            penaltyPushText += `\n\n🚨 [RANK DEMOTION]\nเนื่องจากคุณพลาดภารกิจติดต่อกันครบ 3 วัน ระบบได้ลดระดับของคุณลงจาก RANK ${oldRank} สู่ RANK ${currentPlayer.rank}`;
-          }
-
-          if (hasLinePush) {
-            for (const uid of connectedLineUserIds) {
-              await sendLinePushMessage(uid, [{ type: 'text', text: penaltyPushText }]);
-            }
+          } else {
+            // No connected LINE account exists, so retain the original penalty behavior for non-LINE operation.
+            await applyDeadlinePenalty();
           }
         }
       }
