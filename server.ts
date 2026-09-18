@@ -27,6 +27,9 @@ import {
   createQuestFlexMessage,
   createCompletionFlexMessage,
   createStatusFlexMessage,
+  createSystemStatusFlexMessage,
+  createEmergencyQuestFlexMessage,
+  createWeeklyBossQuestFlexMessage,
   createReminderFlexMessage,
   createBriefingFlexMessage,
   createWeeklySummaryFlexMessage,
@@ -698,7 +701,7 @@ async function startServer() {
     }
 
     if (result.rankUp) {
-      const rankFlex = createRankUpFlexMessage(result.newRank, currentPlayer);
+      const rankFlex = createRankUpFlexMessage(result.newRank, currentPlayer, result.oldRank);
       for (const uid of targetUserIds) {
         if (uid && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
           await sendLinePushMessage(uid, [rankFlex]);
@@ -1505,6 +1508,27 @@ async function startServer() {
             await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM] ขณะนี้ไม่มี WEEKLY BOSS ที่ active อยู่' }]);
           }
         }
+        // 0. System Window dashboard / special quest windows
+        if (lower === 'system' || lower === 'home' || lower === 'หน้าหลัก') {
+          const statusFlex = createSystemStatusFlexMessage(currentPlayer, appUrl, {
+            dailyQuest: currentQuest, emergencyQuest, weeklyBossQuest
+          });
+          if (replyToken) await replyLineMessage(replyToken, [statusFlex]);
+        }
+        else if (lower === 'บอส' || lower === 'boss' || lower.includes('weekly boss')) {
+          if (weeklyBossQuest) {
+            if (replyToken) await replyLineMessage(replyToken, [createWeeklyBossQuestFlexMessage(weeklyBossQuest, appUrl)]);
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM]\nไม่พบ WEEKLY BOSS ที่กำลังทำงานอยู่' }]);
+          }
+        }
+        else if (lower === 'ฉุกเฉิน' || lower === 'emergency' || lower.includes('เควสฉุกเฉิน')) {
+          if (emergencyQuest) {
+            if (replyToken) await replyLineMessage(replyToken, [createEmergencyQuestFlexMessage(emergencyQuest, appUrl)]);
+          } else if (replyToken) {
+            await replyLineMessage(replyToken, [{ type: 'text', text: '[SYSTEM]\nไม่พบ Emergency Quest ที่กำลังทำงานอยู่' }]);
+          }
+        }
         // 1. Check for Quest inquiry
         else if (
           lower === 'quest' ||
@@ -1527,7 +1551,9 @@ async function startServer() {
           lower === 'level' ||
           lower.includes('พลัง')
         ) {
-          const statusFlex = createStatusFlexMessage(currentPlayer, appUrl);
+          const statusFlex = createSystemStatusFlexMessage(currentPlayer, appUrl, {
+            dailyQuest: currentQuest, emergencyQuest, weeklyBossQuest
+          });
           if (replyToken) {
             await replyLineMessage(replyToken, [statusFlex]);
           }
@@ -1772,6 +1798,21 @@ async function startServer() {
   app.post('/api/line/simulate', async (req, res) => {
     const { message, action } = req.body;
     const appUrl = process.env.APP_URL || 'http://localhost:3000';
+
+    if (action === 'GET_SYSTEM_STATUS_FLEX') {
+      const flexMsg = createSystemStatusFlexMessage(currentPlayer, appUrl, { dailyQuest: currentQuest, emergencyQuest, weeklyBossQuest });
+      return res.json({ type: 'flex', flexMessage: flexMsg, player: currentPlayer });
+    }
+
+    if (action === 'GET_EMERGENCY_FLEX') {
+      if (!emergencyQuest) return res.status(404).json({ type: 'text', systemText: '[SYSTEM] ไม่มี Emergency Quest ที่ active' });
+      return res.json({ type: 'flex', flexMessage: createEmergencyQuestFlexMessage(emergencyQuest, appUrl), quest: emergencyQuest });
+    }
+
+    if (action === 'GET_BOSS_FLEX') {
+      if (!weeklyBossQuest) return res.status(404).json({ type: 'text', systemText: '[SYSTEM] ไม่มี Weekly Boss ที่ active' });
+      return res.json({ type: 'flex', flexMessage: createWeeklyBossQuestFlexMessage(weeklyBossQuest, appUrl), quest: weeklyBossQuest });
+    }
 
     if (action === 'GET_QUEST_FLEX') {
       const flexMsg = createQuestFlexMessage(currentQuest, appUrl);
@@ -2170,7 +2211,7 @@ async function startServer() {
             timestamp: createdAt.toISOString()
           });
 
-          const emergencyFlex = createQuestFlexMessage(emergencyQuest, appUrl);
+          const emergencyFlex = createEmergencyQuestFlexMessage(emergencyQuest, appUrl);
           const emergencyAlert = {
             type: 'text',
             text: '[SYSTEM ALERT] ตรวจพบภาวะฉุกเฉิน\nระบบได้สร้าง Emergency Quest แบบเวลาจำกัดขึ้นใหม่\nภารกิจนี้มีเวลา 1 ชั่วโมงในการปฏิบัติ และให้ XP x2 จากค่าปกติ'
@@ -2219,7 +2260,7 @@ async function startServer() {
             timestamp: new Date().toISOString()
           });
 
-          const bossFlex = createQuestFlexMessage(weeklyBossQuest, appUrl);
+          const bossFlex = createWeeklyBossQuestFlexMessage(weeklyBossQuest, appUrl);
           const bossAlert = {
             type: 'text',
             text: '[SYSTEM] ภารกิจประจำสัปดาห์ปรากฏขึ้น\nWEEKLY BOSS: ภารกิจระดับ ELITE พร้อมให้พิชิตแล้ว\nกำหนดส่ง: วันอาทิตย์ 23:59 น. | XP x3'
