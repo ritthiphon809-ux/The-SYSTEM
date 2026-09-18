@@ -53,7 +53,7 @@ export interface Player {
   weightKg?: number;
   heightCm?: number;
   // Feature 2: Boss Quest & Achievements
-  weeklyBossesCleared?: number;
+  weeklyBossesCleared: number;
   titles?: string[];
   badges?: string[];
 }
