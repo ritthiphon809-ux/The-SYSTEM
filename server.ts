@@ -22,6 +22,7 @@ import {
   replyLineMessage,
   sendLinePushMessage
 } from './server/line-service.ts';
+import { setupDefaultRichMenu, listRichMenus } from './server/line-richmenu.ts';
 
 dotenv.config();
 
@@ -479,6 +480,30 @@ async function startServer() {
       results,
       connectedUsersCount: connectedLineUserIds.size
     });
+  });
+
+  // 13b. Setup / Refresh the default LINE Rich Menu (run once after each deploy,
+  // or whenever APP_URL changes, so the button links point to the right place)
+  app.get('/api/line/richmenu/setup', async (_req, res) => {
+    const appUrl = process.env.APP_URL || 'http://localhost:3000';
+    if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+      return res.status(400).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN is not configured.' });
+    }
+    try {
+      const result = await setupDefaultRichMenu(appUrl);
+      res.json({ success: true, ...result, appUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to set up rich menu', details: err.message });
+    }
+  });
+
+  app.get('/api/line/richmenu/list', async (_req, res) => {
+    try {
+      const result = await listRichMenus();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list rich menus', details: err.message });
+    }
   });
 
   // 14. LINE Webhook Endpoint (Official LINE Messaging API Spec)
