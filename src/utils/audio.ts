@@ -115,6 +115,47 @@ export function playWarningSound() {
   } catch {}
 }
 
+// Signature Solo Leveling System "Ting!" Bell Tone
+export function playSystemTingSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    // High-pitched crystal bell chime (C7 + E7 shimmer)
+    const freqs = [2093, 2637, 3136];
+    freqs.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15 / (i + 1), ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.65);
+    });
+  } catch {}
+}
+
+// Emergency / Penalty Alarm Sound
+export function playPenaltyAlertSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(90, ctx.currentTime + 0.35);
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch {}
+}
+
 // Subtle Haptic Feedback
 export function triggerHaptic(type: 'light' | 'medium' | 'success' | 'warning' = 'light') {
   if (typeof window !== 'undefined' && 'vibrate' in navigator) {

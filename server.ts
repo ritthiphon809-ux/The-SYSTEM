@@ -7,7 +7,13 @@ import {
   DEMO_PLAYER_STATE,
   FALLBACK_DAILY_QUESTS,
   PENALTY_QUEST_TEMPLATE,
-  processQuestCompletion
+  processQuestCompletion,
+  applyHpDrain,
+  allocatePlayerStat,
+  syncHealthKitData,
+  createEmergencyQuest,
+  createPenaltyZoneQuest,
+  PROGRESSION_CONFIG
 } from './src/modules/game-engine.ts';
 import {
   generateDailyQuestWithAI,
@@ -22,7 +28,6 @@ import {
   replyLineMessage,
   sendLinePushMessage
 } from './server/line-service.ts';
-import { setupDefaultRichMenu, listRichMenus } from './server/line-richmenu.ts';
 
 dotenv.config();
 
@@ -115,6 +120,150 @@ async function startServer() {
   // 2. Get Player State
   app.get('/api/player', (_req, res) => {
     res.json({ player: currentPlayer });
+  });
+
+  // 2.1 Allocate Stat Points (STR, AGI, VIT, INT)
+  app.post('/api/player/allocate-stat', (req, res) => {
+    const { stat, points = 1 } = req.body;
+    if (!stat || !['STR', 'AGI', 'VIT', 'INT'].includes(stat)) {
+      return res.status(400).json({ error: 'Invalid attribute target. Must be STR, AGI, VIT, or INT.' });
+    }
+
+    const result = allocatePlayerStat(currentPlayer, stat, points);
+    if (!result.success) {
+      return res.status(400).json({ error: result.message });
+    }
+
+    currentPlayer = result.player;
+    eventLogs.unshift({
+      id: `evt-${Date.now()}-stat`,
+      type: 'STAT_ALLOCATED',
+      title: `[STAT ALLOCATED: +${points} ${stat}]`,
+      description: `Attribute amplified. Current ${stat}: ${currentPlayer.stats[stat as keyof typeof currentPlayer.stats]}.`,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, player: currentPlayer, message: result.message });
+  });
+
+  // 2.2 Simulate / Trigger Hourly HP Decay (-5 HP/hr or custom)
+  app.post('/api/player/hp-drain', (req, res) => {
+    const { hours = 1 } = req.body;
+    const result = applyHpDrain(currentPlayer, hours);
+    currentPlayer = result.player;
+
+    if (result.enteredPenalty) {
+      currentQuest = createPenaltyZoneQuest();
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-penzone`,
+        type: 'PENALTY_CREATED',
+        title: '[CRITICAL: HP DEPLETED — PENALTY ZONE]',
+        description: 'Vital signs reached 0. Player transported to the Penalty Zone. Survival protocol required.',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-hpdrain`,
+        type: 'HP_DRAINED',
+        title: `[VITAL DECAY: -${result.drained} HP]`,
+        description: `Physical inactivity caused cellular degradation. Current HP: ${currentPlayer.hp}/${currentPlayer.maxHp}.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      player: currentPlayer,
+      quest: currentQuest,
+      drained: result.drained,
+      enteredPenalty: result.enteredPenalty
+    });
+  });
+
+  // 2.3 Apple HealthKit / Google Fit Background Sync
+  app.post('/api/player/sync-health', (req, res) => {
+    const { steps, heartRate, calories } = req.body;
+    if (typeof steps !== 'number') {
+      return res.status(400).json({ error: 'Step count is required.' });
+    }
+
+    const result = syncHealthKitData(currentPlayer, { steps, heartRate, calories });
+    currentPlayer = result.player;
+
+    if (result.hpRecovered > 0) {
+      eventLogs.unshift({
+        id: `evt-${Date.now()}-hprecov`,
+        type: 'HP_RESTORED',
+        title: `[HEALTH SYNCHRONIZED: +${result.hpRecovered} HP]`,
+        description: `Bio-sensor sync confirmed. Steps: ${currentPlayer.stepsToday}. AGI Multiplier applied.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      player: currentPlayer,
+      hpRecovered: result.hpRecovered
+    });
+  });
+
+  // 2.4 Trigger Emergency Quest (Inactivity or Low HP trigger)
+  app.post('/api/quest/emergency', (_req, res) => {
+    currentQuest = createEmergencyQuest(currentPlayer);
+    eventLogs.unshift({
+      id: `evt-${Date.now()}-emq`,
+      type: 'EMERGENCY_QUEST',
+      title: '[EMERGENCY QUEST DISPATCHED]',
+      description: 'The System detected dangerous biological stagnation. Move 500 steps in 10 minutes to avoid penalty.',
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      quest: currentQuest,
+      systemMessage: '[The System has issued an Emergency Quest.]'
+    });
+  });
+
+  // 2.5 Clear Penalty Zone (Survival workout complete)
+  app.post('/api/penalty/clear', (_req, res) => {
+    const maxHp = currentPlayer.maxHp || PROGRESSION_CONFIG.calculateMaxHp(currentPlayer.stats.VIT);
+    currentPlayer = {
+      ...currentPlayer,
+      hp: maxHp,
+      isPenaltyZone: false,
+      lastActiveAt: new Date().toISOString()
+    };
+
+    currentQuest = {
+      id: `quest-${Date.now()}`,
+      title: 'Daily Ascension Protocol',
+      description: 'Penalty survived. Biological system restored to optimal parameters.',
+      type: 'STRENGTH',
+      difficulty: 'NORMAL',
+      target: 20,
+      unit: 'reps',
+      xpReward: 60,
+      statRewards: { STR: 1, VIT: 1 },
+      deadline: '21:00',
+      status: 'AVAILABLE',
+      createdAt: new Date().toISOString()
+    };
+
+    eventLogs.unshift({
+      id: `evt-${Date.now()}-survived`,
+      type: 'PENALTY_SURVIVED',
+      title: '[PENALTY ZONE SURVIVED]',
+      description: 'Survival protocol completed. Vital signs replenished to 100%. System unlocked.',
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      player: currentPlayer,
+      quest: currentQuest,
+      systemMessage: '[The System acknowledges your survival. Vital signs replenished.]'
+    });
   });
 
   // 3. Reset to Demo State (Specification #35 Demo Player)
@@ -480,30 +629,6 @@ async function startServer() {
       results,
       connectedUsersCount: connectedLineUserIds.size
     });
-  });
-
-  // 13b. Setup / Refresh the default LINE Rich Menu (run once after each deploy,
-  // or whenever APP_URL changes, so the button links point to the right place)
-  app.get('/api/line/richmenu/setup', async (_req, res) => {
-    const appUrl = process.env.APP_URL || 'http://localhost:3000';
-    if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
-      return res.status(400).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN is not configured.' });
-    }
-    try {
-      const result = await setupDefaultRichMenu(appUrl);
-      res.json({ success: true, ...result, appUrl });
-    } catch (err: any) {
-      res.status(500).json({ error: 'Failed to set up rich menu', details: err.message });
-    }
-  });
-
-  app.get('/api/line/richmenu/list', async (_req, res) => {
-    try {
-      const result = await listRichMenus();
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: 'Failed to list rich menus', details: err.message });
-    }
   });
 
   // 14. LINE Webhook Endpoint (Official LINE Messaging API Spec)

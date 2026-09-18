@@ -22,13 +22,24 @@ export interface Player {
   createdAt: string;
   lastActiveAt: string;
   isDemo?: boolean;
+  // Solo Leveling Core Mechanics
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  statPoints: number;
+  lastHpDrainAt: string;
+  stepsToday: number;
+  heartRate: number;
+  caloriesBurned: number;
+  isPenaltyZone: boolean;
 }
 
 export type QuestDifficulty = 'EASY' | 'NORMAL' | 'HARD' | 'ELITE';
 
 export type QuestStatus = 'AVAILABLE' | 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED' | 'CANCELLED';
 
-export type QuestType = 'STRENGTH' | 'AGILITY' | 'VITALITY' | 'DISCIPLINE' | 'PENALTY';
+export type QuestType = 'STRENGTH' | 'AGILITY' | 'VITALITY' | 'DISCIPLINE' | 'PENALTY' | 'EMERGENCY';
 
 export interface Quest {
   id: string;
@@ -45,6 +56,7 @@ export interface Quest {
   createdAt: string;
   completedAt?: string;
   isPenalty?: boolean;
+  isEmergency?: boolean;
 }
 
 export type SystemEventType =
@@ -59,7 +71,12 @@ export type SystemEventType =
   | 'STREAK_INCREASED'
   | 'STREAK_MAINTAINED'
   | 'SYSTEM_WARNING'
-  | 'PENALTY_CREATED';
+  | 'PENALTY_CREATED'
+  | 'HP_DRAINED'
+  | 'HP_RESTORED'
+  | 'PENALTY_SURVIVED'
+  | 'STAT_ALLOCATED'
+  | 'EMERGENCY_QUEST';
 
 export interface SystemEvent {
   id: string;

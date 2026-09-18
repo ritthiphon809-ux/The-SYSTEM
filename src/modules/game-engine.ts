@@ -20,6 +20,14 @@ export const PROGRESSION_CONFIG = {
     if (level >= 21) return 'C';
     if (level >= 11) return 'D';
     return 'E';
+  },
+
+  calculateMaxHp: (vit: number): number => {
+    return 100 + (vit || 0) * 10;
+  },
+
+  calculateMaxStamina: (agi: number): number => {
+    return 100 + (agi || 0) * 5;
   }
 };
 
@@ -37,6 +45,16 @@ export const INITIAL_PLAYER_STATE: Player = {
     VIT: 5,
     INT: 5
   },
+  hp: 150,
+  maxHp: 150,
+  stamina: 125,
+  maxStamina: 125,
+  statPoints: 0,
+  lastHpDrainAt: new Date().toISOString(),
+  stepsToday: 0,
+  heartRate: 72,
+  caloriesBurned: 0,
+  isPenaltyZone: false,
   streak: 0,
   totalQuestCompleted: 0,
   totalWorkoutMinutes: 0,
@@ -63,6 +81,16 @@ export const DEMO_PLAYER_STATE: Player = {
     VIT: 14,
     INT: 7
   },
+  hp: 195,
+  maxHp: 240, // 100 + 14 * 10
+  stamina: 120,
+  maxStamina: 145, // 100 + 9 * 5
+  statPoints: 3, // Ready for user to allocate
+  lastHpDrainAt: new Date().toISOString(),
+  stepsToday: 4850,
+  heartRate: 76,
+  caloriesBurned: 345,
+  isPenaltyZone: false,
   streak: 7,
   totalQuestCompleted: 14,
   totalWorkoutMinutes: 280,
@@ -89,7 +117,10 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
   const events: SystemEvent[] = [];
   const oldLevel = player.level;
   const oldRank = player.rank;
-  const xpGained = quest.xpReward;
+
+  // STR Mechanic: Increases EXP gained from strength workouts (+2.5% per STR point)
+  const strBonusMult = quest.type === 'STRENGTH' ? 1 + (player.stats.STR * 0.025) : 1;
+  const xpGained = Math.round(quest.xpReward * strBonusMult);
   const statGained = quest.statRewards || {};
 
   let currentXp = player.xp + xpGained;
@@ -97,9 +128,11 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
   let maxXp = PROGRESSION_CONFIG.getXpThresholdForLevel(currentLevel);
 
   let levelUp = false;
+  let levelsGained = 0;
   while (currentXp >= maxXp) {
     currentXp -= maxXp;
     currentLevel += 1;
+    levelsGained += 1;
     maxXp = PROGRESSION_CONFIG.getXpThresholdForLevel(currentLevel);
     levelUp = true;
   }
@@ -115,16 +148,28 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     INT: player.stats.INT + (statGained.INT || 0)
   };
 
-  const newStreak = quest.isPenalty ? player.streak : player.streak + 1;
+  // VIT Mechanic: Increases the Max HP bar
+  const newMaxHp = PROGRESSION_CONFIG.calculateMaxHp(newStats.VIT);
+  const newMaxStamina = PROGRESSION_CONFIG.calculateMaxStamina(newStats.AGI);
 
-  // Generate system events
+  // HP Recovery: Completing physical activity restores HP
+  const hpRestored = quest.isPenalty
+    ? newMaxHp
+    : Math.round(40 + player.stats.AGI * 1.5);
+  const updatedHp = quest.isPenalty ? newMaxHp : Math.min(newMaxHp, (player.hp || 0) + hpRestored);
+
+  // Progression: Leveling up grants 3 Stat Points per level gained
+  const statPointsEarned = levelsGained * 3;
+  const updatedStatPoints = (player.statPoints || 0) + statPointsEarned;
+
+  const newStreak = quest.isPenalty ? player.streak : player.streak + 1;
   const now = new Date().toISOString();
 
   events.push({
     id: `event-${Date.now()}-1`,
     type: 'QUEST_COMPLETED',
     title: `Quest Completed: ${quest.title}`,
-    description: `Target verified. Objective fulfilled.`,
+    description: `Target verified. Objective fulfilled. HP Restored (+${hpRestored} HP).`,
     timestamp: now,
     xpChange: xpGained,
     statChange: statGained
@@ -133,7 +178,7 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
   events.push({
     id: `event-${Date.now()}-2`,
     type: 'XP_GAINED',
-    title: `+${xpGained} XP Acquired`,
+    title: `+${xpGained} XP Acquired${strBonusMult > 1 ? ` [STR Bonus x${strBonusMult.toFixed(2)}]` : ''}`,
     description: `Assimilation into system matrix.`,
     timestamp: now,
     xpChange: xpGained
@@ -158,7 +203,7 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
       id: `event-${Date.now()}-4`,
       type: 'LEVEL_UP',
       title: `LEVEL UP [LV. ${String(oldLevel).padStart(2, '0')} → LV. ${String(currentLevel).padStart(2, '0')}]`,
-      description: `Your body has become stronger.`,
+      description: `Your body has become stronger. +${statPointsEarned} Stat Points acquired.`,
       timestamp: now,
       levelChange: { from: oldLevel, to: currentLevel }
     });
@@ -175,12 +220,12 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     });
   }
 
-  if (!quest.isPenalty) {
+  if (quest.isPenalty) {
     events.push({
-      id: `event-${Date.now()}-6`,
-      type: 'STREAK_INCREASED',
-      title: `Streak Maintained: ${newStreak} Days`,
-      description: `Discipline is consistency over time.`,
+      id: `event-${Date.now()}-7`,
+      type: 'PENALTY_SURVIVED',
+      title: `[PENALTY ZONE ESCAPED]`,
+      description: `Biological stasis averted. Vital signs restored to 100%.`,
       timestamp: now
     });
   }
@@ -192,6 +237,12 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     currentLevelMaxXp: maxXp,
     rank: currentRank,
     stats: newStats,
+    hp: updatedHp,
+    maxHp: newMaxHp,
+    stamina: Math.min(newMaxStamina, (player.stamina || 0) + 25),
+    maxStamina: newMaxStamina,
+    statPoints: updatedStatPoints,
+    isPenaltyZone: false,
     streak: newStreak,
     totalQuestCompleted: player.totalQuestCompleted + 1,
     totalWorkoutMinutes: player.totalWorkoutMinutes + (quest.type === 'VITALITY' ? 25 : 15),
@@ -209,6 +260,132 @@ export function processQuestCompletion(player: Player, quest: Quest): Completion
     xpGained,
     statGained,
     systemEvents: events
+  };
+}
+
+// 1. Hourly HP Drain Calculation
+export function applyHpDrain(player: Player, hours: number = 1): { player: Player; drained: number; enteredPenalty: boolean } {
+  // Standard drain: 5 HP per hour (or adjusted by elapsed time)
+  const drainAmount = Math.max(1, Math.round(5 * hours));
+  const currentHp = player.hp ?? player.maxHp ?? PROGRESSION_CONFIG.calculateMaxHp(player.stats.VIT);
+  const newHp = Math.max(0, currentHp - drainAmount);
+  const enteredPenalty = newHp === 0;
+
+  const updatedPlayer: Player = {
+    ...player,
+    hp: newHp,
+    maxHp: PROGRESSION_CONFIG.calculateMaxHp(player.stats.VIT),
+    isPenaltyZone: enteredPenalty || player.isPenaltyZone,
+    lastHpDrainAt: new Date().toISOString()
+  };
+
+  return {
+    player: updatedPlayer,
+    drained: drainAmount,
+    enteredPenalty
+  };
+}
+
+// 2. Stat Points Allocation
+export function allocatePlayerStat(
+  player: Player,
+  stat: keyof PlayerStats,
+  points: number = 1
+): { player: Player; success: boolean; message: string } {
+  if (player.statPoints < points) {
+    return { player, success: false, message: 'Insufficient Stat Points available.' };
+  }
+
+  const newStats: PlayerStats = {
+    ...player.stats,
+    [stat]: player.stats[stat] + points
+  };
+
+  const newMaxHp = PROGRESSION_CONFIG.calculateMaxHp(newStats.VIT);
+  const newMaxStamina = PROGRESSION_CONFIG.calculateMaxStamina(newStats.AGI);
+
+  // If VIT increases, HP pool expands proportionally
+  const hpBonus = stat === 'VIT' ? points * 10 : 0;
+
+  const updatedPlayer: Player = {
+    ...player,
+    stats: newStats,
+    statPoints: player.statPoints - points,
+    maxHp: newMaxHp,
+    hp: Math.min(newMaxHp, (player.hp || 0) + hpBonus),
+    maxStamina: newMaxStamina
+  };
+
+  return {
+    player: updatedPlayer,
+    success: true,
+    message: `[STAT ALLOCATED]\n+${points} ${stat}. Current: ${newStats[stat]}.`
+  };
+}
+
+// 3. Apple HealthKit / Google Fit Integration & HP Recovery
+// AGI increases HP recovered per step taken
+export function syncHealthKitData(
+  player: Player,
+  data: { steps: number; heartRate?: number; calories?: number }
+): { player: Player; hpRecovered: number } {
+  const stepsDelta = Math.max(0, data.steps - (player.stepsToday || 0));
+  // Recovery formula: Every 200 steps restores (1 + AGI * 0.1) HP
+  const hpRecovered = Math.round((stepsDelta / 200) * (1 + (player.stats.AGI || 5) * 0.1));
+  const maxHp = player.maxHp || PROGRESSION_CONFIG.calculateMaxHp(player.stats.VIT);
+  const newHp = Math.min(maxHp, (player.hp || 0) + hpRecovered);
+
+  const updatedPlayer: Player = {
+    ...player,
+    stepsToday: data.steps,
+    heartRate: data.heartRate || player.heartRate || 74,
+    caloriesBurned: (player.caloriesBurned || 0) + (data.calories || 0),
+    hp: newHp,
+    isPenaltyZone: newHp > 0 ? false : player.isPenaltyZone,
+    lastActiveAt: new Date().toISOString()
+  };
+
+  return {
+    player: updatedPlayer,
+    hpRecovered
+  };
+}
+
+// 4. Emergency Quest Generator
+export function createEmergencyQuest(player: Player): Quest {
+  return {
+    id: `quest-emergency-${Date.now()}`,
+    title: 'EMERGENCY QUEST: SURVIVAL SPRINT',
+    description: 'Critical inactivity or physiological distress detected. Move 500 steps within 10 minutes to avert Penalty Zone.',
+    type: 'EMERGENCY',
+    difficulty: 'HARD',
+    target: 500,
+    unit: 'steps',
+    xpReward: 120,
+    statRewards: { AGI: 2, VIT: 1 },
+    deadline: new Date(Date.now() + 10 * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    status: 'AVAILABLE',
+    createdAt: new Date().toISOString(),
+    isEmergency: true
+  };
+}
+
+// 5. Penalty Quest (Solo Leveling Penalty Zone Survival)
+export function createPenaltyZoneQuest(): Quest {
+  return {
+    id: `quest-penalty-${Date.now()}`,
+    title: 'PENALTY QUEST: SURVIVE THE CENTIPEDES',
+    description: 'HP reached 0. You have been transported to the Penalty Zone. Complete 50 Push-ups or 100 Squats to unlock the System and restore vital signs.',
+    type: 'PENALTY',
+    difficulty: 'ELITE',
+    target: 50,
+    unit: 'reps',
+    xpReward: 30,
+    statRewards: { STR: 1, VIT: 2 },
+    deadline: 'IMMOBILIZED',
+    status: 'IN_PROGRESS',
+    createdAt: new Date().toISOString(),
+    isPenalty: true
   };
 }
 
